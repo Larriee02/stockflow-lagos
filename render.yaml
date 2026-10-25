@@ -1,0 +1,20 @@
+databases:
+  - name: stockflow-lagos-db
+    databaseName: stockflow_lagos
+    user: stockflow_admin
+    plan: free
+
+services:
+  - type: web
+    name: stockflow-lagos
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockflow-lagos-db
+          property: connectionString

@@ -1,0 +1,342 @@
+@import "tailwindcss";
+
+/* CRITICAL FOR TAILWIND V4: Make `dark:` utilities respond to the `.dark` class toggle! */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+
+  /* LIGHT MODE: Warm Alabaster Off-White, Warm Sapphire Blue & Silk Stone Grey */
+  --bg-app: #f4f0e8;
+  --bg-mesh:
+    radial-gradient(at 10% 6%, rgba(38, 92, 145, 0.14) 0px, transparent 48%),
+    radial-gradient(at 88% 12%, rgba(212, 198, 174, 0.55) 0px, transparent 52%),
+    radial-gradient(at 50% 92%, rgba(52, 108, 162, 0.12) 0px, transparent 55%),
+    linear-gradient(180deg, #faf8f3 0%, #efeae0 100%);
+
+  --bg-card: rgba(255, 253, 249, 0.76);
+  --bg-card-elevated: rgba(255, 254, 251, 0.92);
+  --bg-subtle: rgba(235, 229, 218, 0.72);
+  --bg-input: rgba(255, 254, 252, 0.88);
+  --bg-option: #fdfcfa;
+  --bg-header: rgba(23, 45, 68, 0.90);
+
+  --border-color: rgba(255, 255, 255, 0.85);
+  --border-outer: rgba(176, 168, 154, 0.45);
+  --divider-color: rgba(180, 172, 158, 0.35);
+
+  --glass-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 0 rgba(35, 87, 132, 0.05),
+    0 12px 32px -8px rgba(22, 38, 58, 0.08),
+    0 2px 6px -1px rgba(22, 38, 58, 0.04);
+
+  /* High-Contrast Complementary Text Colors (Light Mode) */
+  --text-primary: #18222f;       /* Deep warm navy-charcoal */
+  --text-secondary: #4e5661;     /* Rich warm slate-grey (high legibility) */
+  --text-muted: #6e7681;         /* Soft warm grey for placeholders */
+
+  /* Complementary Semantic Accents (Light Mode) */
+  --brand-blue: #215584;         /* Warm sapphire blue */
+  --brand-blue-hover: #194369;
+  --brand-blue-soft: rgba(33, 85, 132, 0.12);
+  --brand-blue-border: rgba(33, 85, 132, 0.28);
+  --brand-gradient: linear-gradient(135deg, #2b679b 0%, #1a446a 100%);
+
+  --color-inflow: #1b6596;       /* Crisp warm cerulean for inflows/gains */
+  --color-outflow: #be2e45;      /* Deep warm crimson-rose for outflows/debts */
+  --color-warning: #9a5b13;      /* Warm amber-bronze for low stock */
+
+  /* Badge Surfaces & Text (Light Mode) */
+  --badge-info-bg: rgba(33, 85, 132, 0.13);
+  --badge-info-text: #164269;
+  --badge-info-border: rgba(33, 85, 132, 0.26);
+
+  --badge-success-bg: rgba(24, 116, 152, 0.13);
+  --badge-success-text: #11536e;
+  --badge-success-border: rgba(24, 116, 152, 0.28);
+
+  --badge-warning-bg: rgba(196, 122, 27, 0.15);
+  --badge-warning-text: #7c460a;
+  --badge-warning-border: rgba(196, 122, 27, 0.32);
+
+  --badge-danger-bg: rgba(190, 46, 69, 0.13);
+  --badge-danger-text: #961d31;
+  --badge-danger-border: rgba(190, 46, 69, 0.28);
+
+  --badge-neutral-bg: rgba(100, 106, 115, 0.13);
+  --badge-neutral-text: #363d47;
+  --badge-neutral-border: rgba(100, 106, 115, 0.25);
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* DARK MODE: Deep Warm Slate-Obsidian, Luminous Sky-Sapphire & Warm Off-White */
+  --bg-app: #0f151e;
+  --bg-mesh:
+    radial-gradient(at 14% 10%, rgba(58, 124, 190, 0.22) 0px, transparent 50%),
+    radial-gradient(at 86% 16%, rgba(42, 58, 80, 0.38) 0px, transparent 52%),
+    radial-gradient(at 50% 90%, rgba(48, 105, 160, 0.18) 0px, transparent 55%),
+    linear-gradient(180deg, #131a26 0%, #0c1119 100%);
+
+  --bg-card: rgba(26, 35, 48, 0.72);
+  --bg-card-elevated: rgba(32, 43, 58, 0.88);
+  --bg-subtle: rgba(39, 51, 68, 0.68);
+  --bg-input: rgba(22, 30, 42, 0.85);
+  --bg-option: #1a2330;
+  --bg-header: rgba(13, 19, 28, 0.88);
+
+  --border-color: rgba(255, 255, 255, 0.14);
+  --border-outer: rgba(148, 163, 184, 0.20);
+  --divider-color: rgba(148, 163, 184, 0.14);
+
+  --glass-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.4),
+    0 16px 38px -10px rgba(0, 0, 0, 0.52),
+    0 4px 12px -2px rgba(0, 0, 0, 0.32);
+
+  /* High-Contrast Complementary Text Colors (Dark Mode) */
+  --text-primary: #f5f2eb;       /* Warm alabaster off-white */
+  --text-secondary: #b4becb;     /* Luminous warm silver-grey (clearly readable) */
+  --text-muted: #8491a3;         /* Balanced warm slate placeholder */
+
+  /* Complementary Semantic Accents (Dark Mode) */
+  --brand-blue: #63a4de;         /* Luminous warm sky-sapphire for text & icons */
+  --brand-blue-hover: #7bb5e8;
+  --brand-blue-soft: rgba(99, 164, 222, 0.18);
+  --brand-blue-border: rgba(99, 164, 222, 0.38);
+  --brand-gradient: linear-gradient(135deg, #3c7db8 0%, #265684 100%);
+
+  --color-inflow: #6bc2f5;       /* Luminous sky blue for inflows/gains */
+  --color-outflow: #fb7185;      /* Soft luminous coral-rose for outflows/debts */
+  --color-warning: #fbbf24;      /* Warm luminous gold for low stock */
+
+  /* Badge Surfaces & Text (Dark Mode) */
+  --badge-info-bg: rgba(77, 148, 214, 0.22);
+  --badge-info-text: #d1e9ff;
+  --badge-info-border: rgba(108, 174, 235, 0.35);
+
+  --badge-success-bg: rgba(56, 168, 214, 0.22);
+  --badge-success-text: #c7f0ff;
+  --badge-success-border: rgba(86, 192, 235, 0.35);
+
+  --badge-warning-bg: rgba(245, 166, 35, 0.20);
+  --badge-warning-text: #fde68a;
+  --badge-warning-border: rgba(251, 191, 36, 0.35);
+
+  --badge-danger-bg: rgba(244, 63, 94, 0.22);
+  --badge-danger-text: #fecdd3;
+  --badge-danger-border: rgba(251, 113, 133, 0.36);
+
+  --badge-neutral-bg: rgba(148, 163, 184, 0.18);
+  --badge-neutral-text: #e2e8f0;
+  --badge-neutral-border: rgba(148, 163, 184, 0.28);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--bg-app);
+  background-image: var(--bg-mesh);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  letter-spacing: -0.012em;
+  overflow-x: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Smooth, Synchronized Light <-> Dark Mode Transition */
+body,
+header,
+nav,
+main,
+section,
+div,
+table,
+thead,
+tbody,
+tr,
+th,
+td,
+input,
+select,
+textarea,
+button,
+span,
+p,
+h1,
+h2,
+h3 {
+  transition:
+    background-color 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.24s ease,
+    box-shadow 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Luxury Sharp Display Headings & Currency Figures */
+h1,
+h2,
+h3,
+.font-luxury {
+  font-family: "Outfit", "Plus Jakarta Sans", -apple-system, sans-serif;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-family: "Outfit", "Plus Jakarta Sans", sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Semantic Text Color Helpers (Guaranteed Contrast in Both Modes) */
+.text-theme-primary {
+  color: var(--text-primary);
+}
+.text-theme-secondary {
+  color: var(--text-secondary);
+}
+.text-theme-brand {
+  color: var(--brand-blue);
+}
+.text-theme-inflow {
+  color: var(--color-inflow);
+}
+.text-theme-outflow {
+  color: var(--color-outflow);
+}
+.text-theme-warning {
+  color: var(--color-warning);
+}
+
+/* Liquid Glass Inputs & Native Dropdowns */
+.liquid-input {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-outer);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+}
+
+.liquid-input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.liquid-input:focus {
+  outline: none;
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 3px var(--brand-blue-soft);
+}
+
+select.liquid-input option {
+  background-color: var(--bg-option);
+  color: var(--text-primary);
+}
+
+/* Liquid Glass Surface Classes */
+.liquid-glass {
+  background-color: var(--bg-card);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid var(--border-outer);
+  box-shadow: var(--glass-shadow);
+  color: var(--text-primary);
+}
+
+.liquid-glass-elevated {
+  background-color: var(--bg-card-elevated);
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  border: 1px solid var(--border-outer);
+  box-shadow: var(--glass-shadow);
+  color: var(--text-primary);
+}
+
+.liquid-glass-header {
+  background-color: var(--bg-header);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow:
+    inset 0 -1px 0 0 rgba(255, 255, 255, 0.12),
+    0 10px 30px -10px rgba(12, 24, 38, 0.28);
+}
+
+.liquid-glass-subtle {
+  background-color: var(--bg-subtle);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border-outer);
+  box-shadow: inset 0 1px 0 0 var(--border-color);
+  color: var(--text-primary);
+}
+
+.liquid-btn-primary {
+  background: var(--brand-gradient);
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.42),
+    0 6px 18px -4px rgba(35, 87, 132, 0.42);
+}
+
+.liquid-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.55),
+    0 10px 24px -4px rgba(35, 87, 132, 0.52);
+}
+
+.liquid-btn-primary:active {
+  transform: translateY(0);
+}
+
+.theme-divider > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--divider-color);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+@media screen and (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}

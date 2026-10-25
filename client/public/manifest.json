@@ -1,0 +1,10 @@
+{
+  "name": "StockFlow Lagos — Provision & Retail Manager",
+  "short_name": "StockFlow",
+  "description": "Shop Counter, Shelf Stock-Taking, History Log, Cashbook & Debtors Tracker",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#1e354d",
+  "orientation": "any"
+}

@@ -1,0 +1,11 @@
+{
+  "name": "stockflow-lagos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "StockFlow Lagos — Retail Provision Store Inventory, Stock-Taking & Naira Cashbook Platform",
+  "scripts": {
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "build": "npm install --prefix server && npm install --prefix client && npm run build --prefix client",
+    "start": "npm start --prefix server"
+  }
+}

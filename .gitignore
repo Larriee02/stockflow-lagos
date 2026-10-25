@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Build outputs
+client/dist/
+
+# Local embedded database storage
+server/pgdata/
+
+# Environment variables & secrets (NEVER commit real .env files)
+.env
+.env.local
+.env.production
+server/.env
+client/.env
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.log
