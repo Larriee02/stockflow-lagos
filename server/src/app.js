@@ -192,8 +192,11 @@ app.post(
   })
 );
 
-// Serve Production Frontend Build (client/dist) automatically when present
-const clientDistPath = path.join(__dirname, '../../client/dist');
+// Serve Production Frontend Build (dist or client/dist) automatically when present
+const rootDistPath = path.join(__dirname, '../../dist');
+const clientDistPath = fs.existsSync(path.join(rootDistPath, 'index.html'))
+  ? rootDistPath
+  : path.join(__dirname, '../../client/dist');
 if (fs.existsSync(path.join(clientDistPath, 'index.html'))) {
   app.use(express.static(clientDistPath));
   app.get('*', (req, res, next) => {

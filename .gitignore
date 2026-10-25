@@ -3,7 +3,15 @@ node_modules/
 client/node_modules/
 server/node_modules/
 
+# Nested package manifests (keep single root package.json for Vercel)
+client/package.json
+client/package-lock.json
+client/vite.config.js
+server/package.json
+server/package-lock.json
+
 # Build outputs
+dist/
 client/dist/
 
 # Local embedded database storage
