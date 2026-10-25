@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const serverlessStore = require('./serverlessStore');
 require('dotenv').config();
 
 const FALLBACK_SCHEMA_SQL = `
@@ -91,58 +91,62 @@ function loadSchemaSql() {
   return FALLBACK_SCHEMA_SQL;
 }
 
+function sanitizeDatabaseUrl(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  let cleaned = raw
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
+    .replace(/^DATABASE_URL=/i, '')
+    .trim();
+
+  // Remove accidental [password] square brackets from Supabase template
+  cleaned = cleaned.replace(/:\[([^\]]+)\]@/, ':$1@');
+
+  // Safely URL-encode password if it contains special characters
+  const match = cleaned.match(/^(postgres(?:ql)?:\/\/[^:]+:)([^@]+)(@.+)$/i);
+  if (match) {
+    const [, prefix, rawPass, suffix] = match;
+    try {
+      const decodedPass = decodeURIComponent(rawPass);
+      cleaned = `${prefix}${encodeURIComponent(decodedPass)}${suffix}`;
+    } catch {
+      cleaned = `${prefix}${encodeURIComponent(rawPass)}${suffix}`;
+    }
+  }
+
+  try {
+    // Validate with URL parser so pg never throws ERR_INVALID_URL
+    new URL(cleaned);
+    return cleaned;
+  } catch (err) {
+    console.warn('[DB] Invalid DATABASE_URL format, falling back to built-in store:', err.message);
+    return null;
+  }
+}
+
 let poolInstance = null;
 let pgliteInstance = null;
 let initPromise = null;
 
-async function getPglite() {
-  if (pgliteInstance) return pgliteInstance;
-  if (initPromise) return initPromise;
+const cleanDbUrl = sanitizeDatabaseUrl(process.env.DATABASE_URL);
+if (cleanDbUrl && !cleanDbUrl.includes('YOUR-PASSWORD')) {
+  try {
+    const isLocalHost =
+      cleanDbUrl.includes('localhost') || cleanDbUrl.includes('127.0.0.1');
 
-  initPromise = (async () => {
-    const { PGlite } = require('@electric-sql/pglite');
-    const dataDir = process.env.VERCEL
-      ? path.join(os.tmpdir(), 'stockflow-pgdata')
-      : path.join(__dirname, '../../pgdata');
-
-    const db = new PGlite(dataDir);
-    await db.waitReady;
-
-    const check = await db.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' AND table_name = 'credit_records'
-      ) AS initialized;
-    `);
-
-    if (!check.rows[0]?.initialized) {
-      await db.exec(loadSchemaSql());
-      console.log('[DB] Initialized Lagos Provision Store schema & Naira (NGN) seed data.');
-    } else {
-      console.log('[DB] Connected to persistent PostgreSQL database.');
-    }
-
-    pgliteInstance = db;
-    return db;
-  })();
-
-  return initPromise;
-}
-
-if (process.env.DATABASE_URL) {
-  const isLocalHost =
-    process.env.DATABASE_URL.includes('localhost') ||
-    process.env.DATABASE_URL.includes('127.0.0.1');
-
-  poolInstance = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: isLocalHost ? false : { rejectUnauthorized: false },
-    max: 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
-    statement_timeout: 10000,
-  });
-  console.log('[DB] Using external PostgreSQL server via DATABASE_URL');
+    poolInstance = new Pool({
+      connectionString: cleanDbUrl,
+      ssl: isLocalHost ? false : { rejectUnauthorized: false },
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 8000,
+      statement_timeout: 8000,
+    });
+    console.log('[DB] Using external PostgreSQL server via DATABASE_URL');
+  } catch (err) {
+    console.warn('[DB] Could not initialize pg Pool, using fallback store:', err.message);
+    poolInstance = null;
+  }
 }
 
 let cloudSchemaReady = false;
@@ -175,22 +179,76 @@ async function ensureCloudSchema() {
   return cloudInitPromise;
 }
 
+async function getLocalEngine() {
+  // On Vercel Serverless without a valid DATABASE_URL, use the pure-JS serverless store
+  // because PGlite WASM throws ERR_INVALID_URL when bundled by @vercel/node
+  if (process.env.VERCEL) {
+    return serverlessStore;
+  }
+
+  if (pgliteInstance) return pgliteInstance;
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    try {
+      const { PGlite } = require('@electric-sql/pglite');
+      const dataDir = path.join(__dirname, '../../pgdata');
+      const db = new PGlite(dataDir);
+      await db.waitReady;
+
+      const check = await db.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' AND table_name = 'credit_records'
+        ) AS initialized;
+      `);
+
+      if (!check.rows[0]?.initialized) {
+        await db.exec(loadSchemaSql());
+        console.log('[DB] Initialized Lagos Provision Store schema & Naira (NGN) seed data.');
+      }
+
+      pgliteInstance = db;
+      return db;
+    } catch (err) {
+      console.warn('[DB] PGlite unavailable, using built-in store:', err.message);
+      pgliteInstance = serverlessStore;
+      return serverlessStore;
+    }
+  })();
+
+  return initPromise;
+}
+
 const dbAdapter = {
   async query(text, params = []) {
     if (poolInstance) {
-      await ensureCloudSchema();
-      return poolInstance.query(text, params);
+      try {
+        await ensureCloudSchema();
+        return await poolInstance.query(text, params);
+      } catch (err) {
+        console.warn('[DB] Cloud query fallback to serverlessStore:', err.message);
+        return serverlessStore.query(text, params);
+      }
     }
-    const db = await getPglite();
+    const db = await getLocalEngine();
     return db.query(text, params);
   },
 
   async connect() {
     if (poolInstance) {
-      await ensureCloudSchema();
-      return poolInstance.connect();
+      try {
+        await ensureCloudSchema();
+        return await poolInstance.connect();
+      } catch (err) {
+        console.warn('[DB] Cloud connect fallback to serverlessStore:', err.message);
+        return serverlessStore.connect();
+      }
     }
-    const db = await getPglite();
+    const db = await getLocalEngine();
+    if (typeof db.connect === 'function') {
+      return db.connect();
+    }
     return {
       query: (text, params = []) => db.query(text, params),
       release: () => {},
