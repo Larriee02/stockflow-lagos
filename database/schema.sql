@@ -73,40 +73,18 @@ CREATE INDEX idx_stock_movements_product_date ON stock_movements(product_id, cre
 CREATE INDEX idx_cash_tx_type_date ON cash_transactions(type, transaction_date DESC);
 CREATE INDEX idx_credit_records_status ON credit_records(status, created_at DESC);
 
--- Seed Data: Realistic Lagos Provision Store (Prices in NGN ₦)
+-- Starter Product Catalog with 0 Initial Stock (All financial & stock figures start at 0)
 INSERT INTO products (sku, name, category, unit, cost_price, selling_price, stock_quantity, reorder_level, supplier_name)
 VALUES
-    ('PRV-001', 'Peak Milk Powder Sachet (Roll x12)', 'Milk & Drinks', 'Roll', 2600.00, 3000.00, 24, 8, 'Oke-Arin Wholesale'),
-    ('PRV-002', 'Milo Activ-Go Sachet (Roll x10)', 'Milk & Drinks', 'Roll', 2100.00, 2500.00, 19, 8, 'Oke-Arin Wholesale'),
-    ('NDL-003', 'Indomie Super Pack 120g (Carton x40)', 'Noodles & Pasta', 'Carton', 14200.00, 16000.00, 4, 6, 'Mushin Market Depot'),
-    ('NDL-004', 'Indomie Super Pack 120g (Single)', 'Noodles & Pasta', 'Piece', 355.00, 450.00, 45, 20, 'Mushin Market Depot'),
-    ('GRN-005', 'Golden Penny Semovita 2kg', 'Swallow & Grains', 'Bag', 2850.00, 3300.00, 3, 10, 'Trade Fair Wholesaler'),
-    ('GRN-006', 'Dangote Granulated Sugar 500g', 'Provisions', 'Pack', 1150.00, 1400.00, 28, 10, 'Oke-Arin Wholesale'),
-    ('OIL-007', 'Devon Kings Cooking Oil 1L Pouch', 'Cooking Oil', 'Pouch', 2400.00, 2800.00, 15, 6, 'Trade Fair Wholesaler'),
-    ('CND-008', 'Titus Sardine in Oil 125g', 'Canned Food', 'Tin', 1150.00, 1400.00, 5, 12, 'Oke-Arin Wholesale'),
-    ('SNK-009', 'Golden Morn Maize Cereal 900g', 'Cereals & Snacks', 'Pack', 3600.00, 4200.00, 11, 5, 'Mushin Market Depot'),
-    ('HHS-010', 'Sunlight Detergent Powder 900g', 'Soap & Household', 'Pack', 1650.00, 2000.00, 4, 8, 'Trade Fair Wholesaler'),
-    ('DRK-011', 'Eva Table Water 75cl (Pack x12)', 'Milk & Drinks', 'Pack', 2400.00, 3000.00, 14, 6, 'Local Beverage Truck'),
-    ('BRD-012', 'Agege / Sliced Family Loaf Bread', 'Bread & Bakery', 'Loaf', 1200.00, 1500.00, 9, 5, 'Morning Bakery Supplier');
-
-INSERT INTO stock_movements (product_id, movement_type, quantity_change, previous_stock, new_stock, unit_price, total_value, counterparty_name, note)
-VALUES
-    (1, 'RESTOCK', 30, 0, 30, 2600.00, 78000.00, 'Oke-Arin Wholesale', 'Monday market restock'),
-    (1, 'SALE', -6, 30, 24, 3000.00, 18000.00, 'Walk-in Customers', 'Morning counter sales'),
-    (3, 'RESTOCK', 10, 0, 10, 14200.00, 142000.00, 'Mushin Market Depot', 'Bought 10 cartons of Indomie'),
-    (3, 'SALE', -6, 10, 4, 16000.00, 96000.00, 'Mama Tobi & Walk-in', 'Sold 6 cartons');
-
-INSERT INTO cash_transactions (type, category, amount, payment_method, counterparty_name, description)
-VALUES
-    ('INFLOW', 'Opening Shop Float', 250000.00, 'BANK_TRANSFER', 'Shop Owner Account', 'Starting capital in OPay / Moniepoint account'),
-    ('OUTFLOW', 'Market Restock', 165000.00, 'BANK_TRANSFER', 'Oke-Arin & Mushin Suppliers', 'Stock purchase for Peak, Indomie & Semovita'),
-    ('INFLOW', 'Counter Sales', 68500.00, 'CASH', 'Walk-in Customers', 'Cash sales at shop front'),
-    ('INFLOW', 'Counter Sales', 45500.00, 'POS', 'Moniepoint POS Terminal', 'Customer card & transfer payments via POS'),
-    ('OUTFLOW', 'Generator Fuel', 6500.00, 'CASH', 'Total Filling Station', '5 litres petrol for shop generator'),
-    ('OUTFLOW', 'Market Transport (Keke/Bus)', 4000.00, 'CASH', 'Keke / Korope Driver', 'Transport fare carrying goods from Mushin market'),
-    ('OUTFLOW', 'EKEDC / Nepa Light', 10000.00, 'BANK_TRANSFER', 'EKEDC Prepaid', 'Shop prepaid electricity meter token');
-
-INSERT INTO credit_records (customer_name, phone, items_summary, total_amount, amount_paid, balance_due, status)
-VALUES
-    ('Mama Tobi (No. 14 Street)', '08031234567', '1 Carton Indomie Super Pack, 2 Rolls Peak Milk', 22000.00, 15000.00, 7000.00, 'OWING'),
-    ('Bro Chinedu (Barber Shop)', '08098765432', '2 Golden Penny Semovita 2kg, 2 Titus Sardine', 9400.00, 5000.00, 4400.00, 'OWING');
+    ('PRV-001', 'Peak Milk Powder Sachet (Roll x12)', 'Milk & Drinks', 'Roll', 2600.00, 3000.00, 0, 8, 'Oke-Arin Wholesale'),
+    ('PRV-002', 'Milo Activ-Go Sachet (Roll x10)', 'Milk & Drinks', 'Roll', 2100.00, 2500.00, 0, 8, 'Oke-Arin Wholesale'),
+    ('NDL-003', 'Indomie Super Pack 120g (Carton x40)', 'Noodles & Pasta', 'Carton', 14200.00, 16000.00, 0, 6, 'Mushin Market Depot'),
+    ('NDL-004', 'Indomie Super Pack 120g (Single)', 'Noodles & Pasta', 'Piece', 355.00, 450.00, 0, 20, 'Mushin Market Depot'),
+    ('GRN-005', 'Golden Penny Semovita 2kg', 'Swallow & Grains', 'Bag', 2850.00, 3300.00, 0, 10, 'Trade Fair Wholesaler'),
+    ('GRN-006', 'Dangote Granulated Sugar 500g', 'Provisions', 'Pack', 1150.00, 1400.00, 0, 10, 'Oke-Arin Wholesale'),
+    ('OIL-007', 'Devon Kings Cooking Oil 1L Pouch', 'Cooking Oil', 'Pouch', 2400.00, 2800.00, 0, 6, 'Trade Fair Wholesaler'),
+    ('CND-008', 'Titus Sardine in Oil 125g', 'Canned Food', 'Tin', 1150.00, 1400.00, 0, 12, 'Oke-Arin Wholesale'),
+    ('SNK-009', 'Golden Morn Maize Cereal 900g', 'Cereals & Snacks', 'Pack', 3600.00, 4200.00, 0, 5, 'Mushin Market Depot'),
+    ('HHS-010', 'Sunlight Detergent Powder 900g', 'Soap & Household', 'Pack', 1650.00, 2000.00, 0, 8, 'Trade Fair Wholesaler'),
+    ('DRK-011', 'Eva Table Water 75cl (Pack x12)', 'Milk & Drinks', 'Pack', 2400.00, 3000.00, 0, 6, 'Local Beverage Truck'),
+    ('BRD-012', 'Agege / Sliced Family Loaf Bread', 'Bread & Bakery', 'Loaf', 1200.00, 1500.00, 0, 5, 'Morning Bakery Supplier');

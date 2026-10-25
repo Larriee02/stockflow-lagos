@@ -64,18 +64,18 @@ CREATE TABLE IF NOT EXISTS credit_records (
 
 INSERT INTO products (sku, name, category, unit, cost_price, selling_price, stock_quantity, reorder_level, supplier_name)
 VALUES
-    ('PRV-001', 'Peak Milk Powder Sachet (Roll x12)', 'Milk & Drinks', 'Roll', 2600.00, 3000.00, 24, 8, 'Oke-Arin Wholesale'),
-    ('PRV-002', 'Milo Activ-Go Sachet (Roll x10)', 'Milk & Drinks', 'Roll', 2100.00, 2500.00, 19, 8, 'Oke-Arin Wholesale'),
-    ('NDL-003', 'Indomie Super Pack 120g (Carton x40)', 'Noodles & Pasta', 'Carton', 14200.00, 16000.00, 4, 6, 'Mushin Market Depot'),
-    ('NDL-004', 'Indomie Super Pack 120g (Single)', 'Noodles & Pasta', 'Piece', 355.00, 450.00, 45, 20, 'Mushin Market Depot'),
-    ('GRN-005', 'Golden Penny Semovita 2kg', 'Swallow & Grains', 'Bag', 2850.00, 3300.00, 3, 10, 'Trade Fair Wholesaler'),
-    ('GRN-006', 'Dangote Granulated Sugar 500g', 'Provisions', 'Pack', 1150.00, 1400.00, 28, 10, 'Oke-Arin Wholesale'),
-    ('OIL-007', 'Devon Kings Cooking Oil 1L Pouch', 'Cooking Oil', 'Pouch', 2400.00, 2800.00, 15, 6, 'Trade Fair Wholesaler'),
-    ('CND-008', 'Titus Sardine in Oil 125g', 'Canned Food', 'Tin', 1150.00, 1400.00, 5, 12, 'Oke-Arin Wholesale'),
-    ('SNK-009', 'Golden Morn Maize Cereal 900g', 'Cereals & Snacks', 'Pack', 3600.00, 4200.00, 11, 5, 'Mushin Market Depot'),
-    ('HHS-010', 'Sunlight Detergent Powder 900g', 'Soap & Household', 'Pack', 1650.00, 2000.00, 4, 8, 'Trade Fair Wholesaler'),
-    ('DRK-011', 'Eva Table Water 75cl (Pack x12)', 'Milk & Drinks', 'Pack', 2400.00, 3000.00, 14, 6, 'Local Beverage Truck'),
-    ('BRD-012', 'Agege / Sliced Family Loaf Bread', 'Bread & Bakery', 'Loaf', 1200.00, 1500.00, 9, 5, 'Morning Bakery Supplier')
+    ('PRV-001', 'Peak Milk Powder Sachet (Roll x12)', 'Milk & Drinks', 'Roll', 2600.00, 3000.00, 0, 8, 'Oke-Arin Wholesale'),
+    ('PRV-002', 'Milo Activ-Go Sachet (Roll x10)', 'Milk & Drinks', 'Roll', 2100.00, 2500.00, 0, 8, 'Oke-Arin Wholesale'),
+    ('NDL-003', 'Indomie Super Pack 120g (Carton x40)', 'Noodles & Pasta', 'Carton', 14200.00, 16000.00, 0, 6, 'Mushin Market Depot'),
+    ('NDL-004', 'Indomie Super Pack 120g (Single)', 'Noodles & Pasta', 'Piece', 355.00, 450.00, 0, 20, 'Mushin Market Depot'),
+    ('GRN-005', 'Golden Penny Semovita 2kg', 'Swallow & Grains', 'Bag', 2850.00, 3300.00, 0, 10, 'Trade Fair Wholesaler'),
+    ('GRN-006', 'Dangote Granulated Sugar 500g', 'Provisions', 'Pack', 1150.00, 1400.00, 0, 10, 'Oke-Arin Wholesale'),
+    ('OIL-007', 'Devon Kings Cooking Oil 1L Pouch', 'Cooking Oil', 'Pouch', 2400.00, 2800.00, 0, 6, 'Trade Fair Wholesaler'),
+    ('CND-008', 'Titus Sardine in Oil 125g', 'Canned Food', 'Tin', 1150.00, 1400.00, 0, 12, 'Oke-Arin Wholesale'),
+    ('SNK-009', 'Golden Morn Maize Cereal 900g', 'Cereals & Snacks', 'Pack', 3600.00, 4200.00, 0, 5, 'Mushin Market Depot'),
+    ('HHS-010', 'Sunlight Detergent Powder 900g', 'Soap & Household', 'Pack', 1650.00, 2000.00, 0, 8, 'Trade Fair Wholesaler'),
+    ('DRK-011', 'Eva Table Water 75cl (Pack x12)', 'Milk & Drinks', 'Pack', 2400.00, 3000.00, 0, 6, 'Local Beverage Truck'),
+    ('BRD-012', 'Agege / Sliced Family Loaf Bread', 'Bread & Bakery', 'Loaf', 1200.00, 1500.00, 0, 5, 'Morning Bakery Supplier')
 ON CONFLICT (sku) DO NOTHING;
 `;
 
@@ -91,6 +91,29 @@ function loadSchemaSql() {
   return FALLBACK_SCHEMA_SQL;
 }
 
+async function applyZeroResetOnce(queryExecutor) {
+  await queryExecutor(`
+    CREATE TABLE IF NOT EXISTS store_settings (
+      key VARCHAR(64) PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  const checkReset = await queryExecutor(
+    `SELECT value FROM store_settings WHERE key = 'zero_reset_v2' LIMIT 1;`
+  );
+  if (!checkReset.rows || checkReset.rows.length === 0) {
+    await queryExecutor(`DELETE FROM cash_transactions;`);
+    await queryExecutor(`DELETE FROM stock_movements;`);
+    await queryExecutor(`DELETE FROM credit_records;`);
+    await queryExecutor(`UPDATE products SET stock_quantity = 0;`);
+    await queryExecutor(
+      `INSERT INTO store_settings (key, value) VALUES ('zero_reset_v2', 'done') ON CONFLICT (key) DO UPDATE SET value = 'done';`
+    );
+    console.log('[DB] Applied zero_reset_v2: All stock and financial records set to 0.');
+  }
+}
+
 function sanitizeDatabaseUrl(raw) {
   if (!raw || typeof raw !== 'string') return null;
   let cleaned = raw
@@ -99,10 +122,8 @@ function sanitizeDatabaseUrl(raw) {
     .replace(/^DATABASE_URL=/i, '')
     .trim();
 
-  // Remove accidental [password] square brackets from Supabase template
   cleaned = cleaned.replace(/:\[([^\]]+)\]@/, ':$1@');
 
-  // Safely URL-encode password if it contains special characters
   const match = cleaned.match(/^(postgres(?:ql)?:\/\/[^:]+:)([^@]+)(@.+)$/i);
   if (match) {
     const [, prefix, rawPass, suffix] = match;
@@ -115,7 +136,6 @@ function sanitizeDatabaseUrl(raw) {
   }
 
   try {
-    // Validate with URL parser so pg never throws ERR_INVALID_URL
     new URL(cleaned);
     return cleaned;
   } catch (err) {
@@ -166,8 +186,9 @@ async function ensureCloudSchema() {
       `);
       if (!check.rows[0]?.initialized) {
         await poolInstance.query(loadSchemaSql());
-        console.log('[DB] Auto-initialized Cloud PostgreSQL schema & Lagos seed data.');
+        console.log('[DB] Auto-initialized Cloud PostgreSQL schema.');
       }
+      await applyZeroResetOnce((sql, params) => poolInstance.query(sql, params));
       cloudSchemaReady = true;
     } catch (err) {
       console.error('[DB] Cloud schema check error:', err.message);
@@ -180,8 +201,6 @@ async function ensureCloudSchema() {
 }
 
 async function getLocalEngine() {
-  // On Vercel Serverless without a valid DATABASE_URL, use the pure-JS serverless store
-  // because PGlite WASM throws ERR_INVALID_URL when bundled by @vercel/node
   if (process.env.VERCEL) {
     return serverlessStore;
   }
@@ -205,8 +224,10 @@ async function getLocalEngine() {
 
       if (!check.rows[0]?.initialized) {
         await db.exec(loadSchemaSql());
-        console.log('[DB] Initialized Lagos Provision Store schema & Naira (NGN) seed data.');
+        console.log('[DB] Initialized Lagos Provision Store schema.');
       }
+
+      await applyZeroResetOnce((sql, params) => db.query(sql, params));
 
       pgliteInstance = db;
       return db;

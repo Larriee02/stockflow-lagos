@@ -68,7 +68,7 @@ const INITIAL_PRODUCT_FORM = {
   unit: 'Pack',
   cost_price: '',
   selling_price: '',
-  stock_quantity: '10',
+  stock_quantity: '0',
   reorder_level: '5',
   supplier_name: '',
 };
@@ -106,6 +106,16 @@ export default function App() {
   }, [darkMode]);
 
   const basketRef = useRef(null);
+  const tabSectionRef = useRef(null);
+
+  const handleSelectTab = (tabId, scrollOnMobile = false) => {
+    setActiveTab(tabId);
+    if (scrollOnMobile && typeof window !== 'undefined' && window.innerWidth < 768) {
+      setTimeout(() => {
+        tabSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 40);
+    }
+  };
 
   // Store Owner Security PIN Lock State
   const [storePin, setStorePin] = useState(() => {
@@ -764,12 +774,6 @@ export default function App() {
                 Enter your Store Owner PIN to access inventory, counter checkout, and your Naira
                 cashbook.
               </p>
-              {isDefaultPin && (
-                <div className="inline-block mt-1 px-3 py-1 rounded-full text-[11px] font-bold liquid-glass-subtle text-theme-brand">
-                  Default Starter PIN: <span className="font-mono font-extrabold">1234</span>{' '}
-                  (Change anytime after unlocking)
-                </div>
-              )}
             </div>
 
             <form onSubmit={handleUnlockStore} className="space-y-4">
@@ -986,8 +990,8 @@ export default function App() {
           </div>
         )}
 
-        {/* 4 Liquid Glass KPI Cards */}
-        <section className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {/* 4 Liquid Glass KPI Cards (Compact 2x2 on Mobile, 4-col on Desktop) */}
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
           <StatCard
             title="Total Money Available"
             value={formatNaira(dashboard.net_cash_balance)}
@@ -1057,23 +1061,30 @@ export default function App() {
           />
         </section>
 
-        {/* Liquid Glass Desktop & Tablet Pill Navigation Bar */}
-        <div className="hidden md:flex items-center justify-between gap-4 liquid-glass p-1.5 rounded-2xl overflow-x-auto no-scrollbar">
-          <div className="flex gap-1.5 shrink-0 w-full">
+        {/* Responsive Liquid Glass Tab Navigation Bar (Visible on ALL Devices: 3x2 Grid on Mobile, Pill Row on Desktop) */}
+        <div
+          ref={tabSectionRef}
+          style={{ scrollMarginTop: '4.5rem' }}
+          className="liquid-glass p-1.5 rounded-2xl"
+        >
+          <div className="grid grid-cols-3 md:flex gap-1.5 w-full">
             {navItems.map((t) => {
               const Icon = t.icon;
               const isActive = activeTab === t.id;
               return (
                 <button
                   key={t.id}
-                  onClick={() => setActiveTab(t.id)}
-                  className={`flex-1 py-2.5 px-3 text-xs sm:text-sm font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
+                  type="button"
+                  onClick={() => handleSelectTab(t.id, false)}
+                  className={`md:flex-1 py-2.5 px-2 sm:px-3 text-[11px] sm:text-xs md:text-sm font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
                     isActive
                       ? 'liquid-btn-primary shadow-sm'
                       : 'text-theme-secondary hover:text-theme-primary hover:bg-white/30 dark:hover:bg-white/10'
                   }`}
                 >
-                  <Icon className="w-4 h-4" /> {t.label}
+                  <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                  <span className="md:hidden truncate">{t.shortLabel}</span>
+                  <span className="hidden md:inline">{t.label}</span>
                 </button>
               );
             })}
@@ -2409,7 +2420,10 @@ export default function App() {
       )}
 
       {/* LIQUID GLASS MOBILE BOTTOM NAVIGATION BAR (< 768px) */}
-      <nav className="md:hidden liquid-glass-elevated fixed bottom-0 left-0 right-0 z-30 border-t grid grid-cols-6 pb-safe">
+      <nav
+        aria-label="Mobile Navigation"
+        className="md:hidden liquid-glass-elevated fixed bottom-0 left-0 right-0 z-50 border-t grid grid-cols-6 pb-safe px-1 pt-1"
+      >
         {navItems.map((t) => {
           const Icon = t.icon;
           const isActive = activeTab === t.id;
@@ -2417,15 +2431,12 @@ export default function App() {
             <button
               key={t.id}
               type="button"
-              onClick={() => {
-                setActiveTab(t.id);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-              className={`py-2 px-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold cursor-pointer ${
-                isActive ? 'text-theme-brand' : 'text-theme-secondary'
+              onClick={() => handleSelectTab(t.id, true)}
+              className={`py-2 px-1 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold cursor-pointer select-none ${
+                isActive ? 'liquid-btn-primary shadow-sm' : 'text-theme-secondary'
               }`}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-4 h-4 shrink-0" />
               <span className="truncate max-w-full">{t.shortLabel}</span>
             </button>
           );
@@ -2951,7 +2962,7 @@ export default function App() {
         <form onSubmit={handleChangeStorePin} className="space-y-4">
           <div>
             <label className="block text-xs font-bold mb-1 text-theme-primary">
-              Current Store PIN {isDefaultPin ? '(Default is 1234)' : ''}
+              Current Store PIN
             </label>
             <input
               type="password"
