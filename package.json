@@ -7,5 +7,12 @@
     "install:all": "npm install --prefix server && npm install --prefix client",
     "build": "npm install --prefix server && npm install --prefix client && npm run build --prefix client",
     "start": "npm start --prefix server"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.12",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
   }
 }
