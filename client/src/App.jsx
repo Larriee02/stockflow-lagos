@@ -23,6 +23,8 @@ import {
   Moon,
   Calendar,
   XCircle,
+  Lock,
+  KeyRound,
 } from 'lucide-react';
 import { useDebounce } from './hooks/useDebounce';
 import { Modal } from './components/ui/Modal';
@@ -104,6 +106,120 @@ export default function App() {
   }, [darkMode]);
 
   const basketRef = useRef(null);
+
+  // Store Owner Security PIN Lock State
+  const [storePin, setStorePin] = useState(() => {
+    try {
+      return sessionStorage.getItem('stockflow_pin') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [isUnlocked, setIsUnlocked] = useState(() => {
+    try {
+      return Boolean(sessionStorage.getItem('stockflow_pin'));
+    } catch {
+      return false;
+    }
+  });
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [verifyingPin, setVerifyingPin] = useState(false);
+  const [isDefaultPin, setIsDefaultPin] = useState(true);
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
+  const [changePinForm, setChangePinForm] = useState({
+    current_pin: '',
+    new_pin: '',
+    confirm_pin: '',
+  });
+
+  useEffect(() => {
+    fetch('/api/v1/auth/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.isDefaultPin === 'boolean') {
+          setIsDefaultPin(data.isDefaultPin);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleUnlockStore = async (e) => {
+    if (e) e.preventDefault();
+    if (!pinInput.trim()) return;
+    setVerifyingPin(true);
+    setPinError('');
+    try {
+      const res = await fetch('/api/v1/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pinInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Incorrect Store PIN.');
+      const cleanPin = pinInput.trim();
+      setStorePin(cleanPin);
+      setIsUnlocked(true);
+      setIsDefaultPin(Boolean(data.isDefaultPin));
+      setPinInput('');
+      try {
+        sessionStorage.setItem('stockflow_pin', cleanPin);
+      } catch {
+        // Ignore sessionStorage error
+      }
+    } catch (err) {
+      setPinError(err.message || 'Incorrect Store PIN.');
+    } finally {
+      setVerifyingPin(false);
+    }
+  };
+
+  const handleLockStore = () => {
+    setIsUnlocked(false);
+    setStorePin('');
+    setPinInput('');
+    setPinError('');
+    try {
+      sessionStorage.removeItem('stockflow_pin');
+    } catch {
+      // Ignore sessionStorage error
+    }
+  };
+
+  const handleChangeStorePin = async (e) => {
+    e.preventDefault();
+    if (changePinForm.new_pin !== changePinForm.confirm_pin) {
+      return alert('New PIN and Confirm PIN do not match.');
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/v1/auth/change-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_pin: changePinForm.current_pin,
+          new_pin: changePinForm.new_pin,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update Store PIN.');
+      const updatedPin = changePinForm.new_pin.trim();
+      setStorePin(updatedPin);
+      setIsDefaultPin(Boolean(data.isDefaultPin));
+      try {
+        sessionStorage.setItem('stockflow_pin', updatedPin);
+      } catch {
+        // Ignore
+      }
+      setShowChangePinModal(false);
+      setChangePinForm({ current_pin: '', new_pin: '', confirm_pin: '' });
+      showSuccessToast('Store Owner PIN updated successfully!');
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState('counter');
   const [loading, setLoading] = useState(true);
@@ -355,7 +471,10 @@ export default function App() {
     try {
       const res = await fetch('/api/v1/sales/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-store-pin': storePin,
+        },
         body: JSON.stringify({
           items: cartItems.map((i) => ({
             product_id: i.product.id,
@@ -368,6 +487,10 @@ export default function App() {
         }),
       });
       const data = await res.json();
+      if (res.status === 401) {
+        handleLockStore();
+        throw new Error(data.error || 'Store PIN required.');
+      }
       if (!res.ok) throw new Error(data.error);
 
       setCart({});
@@ -414,10 +537,17 @@ export default function App() {
 
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-store-pin': storePin,
+        },
         body: JSON.stringify({ ...productForm, sku: autoSku }),
       });
       const data = await res.json();
+      if (res.status === 401) {
+        handleLockStore();
+        throw new Error(data.error || 'Store PIN required.');
+      }
       if (!res.ok) throw new Error(data.error);
 
       setShowProductModal(false);
@@ -442,6 +572,7 @@ export default function App() {
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': `${selectedProduct.id}-${Date.now()}`,
+          'x-store-pin': storePin,
         },
         body: JSON.stringify({
           product_id: selectedProduct.id,
@@ -449,6 +580,10 @@ export default function App() {
         }),
       });
       const data = await res.json();
+      if (res.status === 401) {
+        handleLockStore();
+        throw new Error(data.error || 'Store PIN required.');
+      }
       if (!res.ok) throw new Error(data.error);
 
       setSelectedProduct(null);
@@ -468,7 +603,10 @@ export default function App() {
     try {
       const res = await fetch('/api/v1/transactions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-store-pin': storePin,
+        },
         body: JSON.stringify({
           ...cashForm,
           description: cashForm.description.trim() || cashForm.category,
@@ -476,6 +614,10 @@ export default function App() {
         }),
       });
       const data = await res.json();
+      if (res.status === 401) {
+        handleLockStore();
+        throw new Error(data.error || 'Store PIN required.');
+      }
       if (!res.ok) throw new Error(data.error);
 
       setShowCashModal(false);
@@ -497,13 +639,20 @@ export default function App() {
     try {
       const res = await fetch(`/api/v1/credits/${repayingCredit.id}/repay`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-store-pin': storePin,
+        },
         body: JSON.stringify({
           amount: repayAmount,
           payment_method: repayMethod,
         }),
       });
       const data = await res.json();
+      if (res.status === 401) {
+        handleLockStore();
+        throw new Error(data.error || 'Store PIN required.');
+      }
       if (!res.ok) throw new Error(data.error);
 
       setRepayingCredit(null);
@@ -520,7 +669,14 @@ export default function App() {
   const handleDeleteCashTx = async (id) => {
     if (!window.confirm('Delete this cashbook entry?')) return;
     try {
-      const res = await fetch(`/api/v1/transactions/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/v1/transactions/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-store-pin': storePin },
+      });
+      if (res.status === 401) {
+        handleLockStore();
+        return alert('Store PIN required.');
+      }
       if (res.ok) fetchAllData();
     } catch (err) {
       alert('Could not delete transaction.');
@@ -563,6 +719,145 @@ export default function App() {
     },
     { id: 'analytics', label: '6. POS vs Cash', shortLabel: 'Summary', icon: BarChart3 },
   ];
+
+  if (!isUnlocked) {
+    return (
+      <div className="min-h-screen flex flex-col justify-between p-4 sm:p-6">
+        <div className="max-w-7xl w-full mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-2xl liquid-glass-subtle text-theme-brand">
+              <Package className="w-5 h-5" />
+            </div>
+            <span className="font-extrabold font-luxury text-base sm:text-lg text-theme-primary">
+              StockFlow Lagos
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDarkMode(!darkMode)}
+            className="liquid-glass-subtle px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 text-theme-primary cursor-pointer"
+          >
+            {darkMode ? (
+              <>
+                <Sun className="w-4 h-4 text-amber-400" />
+                <span>Light Mode</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-4 h-4 text-theme-brand" />
+                <span>Dark Mode</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        <div className="max-w-md w-full mx-auto my-auto py-6">
+          <div className="liquid-glass rounded-3xl p-6 sm:p-8 space-y-6">
+            <div className="text-center space-y-2">
+              <div className="w-14 h-14 mx-auto rounded-2xl liquid-btn-primary flex items-center justify-center shadow-lg">
+                <Lock className="w-7 h-7" />
+              </div>
+              <h1 className="text-xl sm:text-2xl font-extrabold font-luxury text-theme-primary">
+                Store Owner Security Lock
+              </h1>
+              <p className="text-xs sm:text-sm text-theme-secondary">
+                Enter your Store Owner PIN to access inventory, counter checkout, and your Naira
+                cashbook.
+              </p>
+              {isDefaultPin && (
+                <div className="inline-block mt-1 px-3 py-1 rounded-full text-[11px] font-bold liquid-glass-subtle text-theme-brand">
+                  Default Starter PIN: <span className="font-mono font-extrabold">1234</span>{' '}
+                  (Change anytime after unlocking)
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleUnlockStore} className="space-y-4">
+              <div>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoFocus
+                  maxLength={8}
+                  placeholder="Enter Store PIN"
+                  value={pinInput}
+                  onChange={(e) => {
+                    setPinError('');
+                    setPinInput(e.target.value.replace(/\D/g, ''));
+                  }}
+                  className="liquid-input w-full text-center text-2xl font-extrabold tracking-[0.45em] rounded-2xl px-4 py-3.5"
+                />
+                {pinError && (
+                  <p className="text-xs font-bold text-theme-outflow text-center mt-2">
+                    {pinError}
+                  </p>
+                )}
+              </div>
+
+              {/* Tactile Number Pad for Counter Touchscreens & Phones */}
+              <div className="grid grid-cols-3 gap-2.5">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                  <button
+                    key={digit}
+                    type="button"
+                    onClick={() => {
+                      setPinError('');
+                      setPinInput((prev) => (prev.length < 8 ? `${prev}${digit}` : prev));
+                    }}
+                    className="liquid-glass-subtle hover:scale-[1.02] active:scale-95 py-3 rounded-2xl text-lg font-extrabold font-luxury text-theme-primary cursor-pointer"
+                  >
+                    {digit}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinError('');
+                    setPinInput('');
+                  }}
+                  className="liquid-glass-subtle py-3 rounded-2xl text-xs font-bold text-theme-secondary cursor-pointer"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinError('');
+                    setPinInput((prev) => (prev.length < 8 ? `${prev}0` : prev));
+                  }}
+                  className="liquid-glass-subtle hover:scale-[1.02] active:scale-95 py-3 rounded-2xl text-lg font-extrabold font-luxury text-theme-primary cursor-pointer"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinError('');
+                    setPinInput((prev) => prev.slice(0, -1));
+                  }}
+                  className="liquid-glass-subtle py-3 rounded-2xl text-xs font-bold text-theme-secondary cursor-pointer"
+                >
+                  ⌫ Back
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                disabled={verifyingPin || !pinInput}
+                className="liquid-btn-primary w-full py-3.5 rounded-2xl text-sm font-extrabold tracking-wide cursor-pointer disabled:opacity-50"
+              >
+                {verifyingPin ? 'Verifying Store PIN...' : 'Unlock Shop Counter'}
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <p className="text-center text-[11px] text-theme-muted">
+          Protected by StockFlow Lagos Store Owner PIN Security
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen pb-24 md:pb-10">
@@ -643,6 +938,28 @@ export default function App() {
               <Wallet className="w-4 h-4" />
               <span className="hidden xs:inline">Record</span>
               <span>Cash</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowChangePinModal(true)}
+              title="Change Store Owner PIN"
+              style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
+              className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
+            >
+              <KeyRound className="w-4 h-4 text-sky-200" />
+              <span className="hidden md:inline">PIN</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLockStore}
+              title="Lock Store Counter"
+              style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
+              className="flex items-center gap-1 bg-rose-500/25 hover:bg-rose-500/40 text-stone-100 border border-rose-300/35 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
+            >
+              <Lock className="w-4 h-4 text-rose-200" />
+              <span className="hidden sm:inline">Lock</span>
             </button>
           </div>
         </div>
@@ -2619,6 +2936,99 @@ export default function App() {
               className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer"
             >
               {submitting ? 'Recording...' : 'Confirm & Add to Cashbook'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL 5: CHANGE STORE OWNER PIN */}
+      <Modal
+        isOpen={showChangePinModal}
+        onClose={() => setShowChangePinModal(false)}
+        title="Change Store Owner Security PIN"
+        subtitle="Set a secret 4 to 8 digit PIN to protect your store inventory and cashbook online."
+      >
+        <form onSubmit={handleChangeStorePin} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold mb-1 text-theme-primary">
+              Current Store PIN {isDefaultPin ? '(Default is 1234)' : ''}
+            </label>
+            <input
+              type="password"
+              inputMode="numeric"
+              required
+              maxLength={8}
+              value={changePinForm.current_pin}
+              onChange={(e) =>
+                setChangePinForm({
+                  ...changePinForm,
+                  current_pin: e.target.value.replace(/\D/g, ''),
+                })
+              }
+              className="liquid-input w-full rounded-xl px-3 py-2 text-sm tracking-widest font-bold"
+              placeholder="Enter current PIN"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold mb-1 text-theme-primary">
+                New PIN (4–8 Digits)
+              </label>
+              <input
+                type="password"
+                inputMode="numeric"
+                required
+                minLength={4}
+                maxLength={8}
+                value={changePinForm.new_pin}
+                onChange={(e) =>
+                  setChangePinForm({
+                    ...changePinForm,
+                    new_pin: e.target.value.replace(/\D/g, ''),
+                  })
+                }
+                className="liquid-input w-full rounded-xl px-3 py-2 text-sm tracking-widest font-bold"
+                placeholder="e.g. 5820"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1 text-theme-primary">
+                Confirm New PIN
+              </label>
+              <input
+                type="password"
+                inputMode="numeric"
+                required
+                minLength={4}
+                maxLength={8}
+                value={changePinForm.confirm_pin}
+                onChange={(e) =>
+                  setChangePinForm({
+                    ...changePinForm,
+                    confirm_pin: e.target.value.replace(/\D/g, ''),
+                  })
+                }
+                className="liquid-input w-full rounded-xl px-3 py-2 text-sm tracking-widest font-bold"
+                placeholder="Repeat new PIN"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowChangePinModal(false)}
+              className="px-4 py-2 text-xs font-semibold cursor-pointer text-theme-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer"
+            >
+              {submitting ? 'Updating...' : 'Save New Store PIN'}
             </button>
           </div>
         </form>

@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const inventoryService = require('./services/inventory.service');
 const cashbookService = require('./services/cashbook.service');
+const authService = require('./services/auth.service');
 require('dotenv').config();
 
 const app = express();
@@ -35,6 +36,47 @@ const asyncHandler = (fn) => (req, res, next) =>
 app.get('/api/v1/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Store Owner PIN Authentication Routes
+app.get(
+  '/api/v1/auth/status',
+  asyncHandler(async (req, res) => {
+    const status = await authService.getPinStatus();
+    res.json(status);
+  })
+);
+
+app.post(
+  '/api/v1/auth/verify',
+  asyncHandler(async (req, res) => {
+    const result = await authService.verifyPin(req.body.pin);
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/v1/auth/change-pin',
+  asyncHandler(async (req, res) => {
+    const result = await authService.changePin(req.body.current_pin, req.body.new_pin);
+    res.json(result);
+  })
+);
+
+// Protect all data-modifying endpoints (POST, PUT, DELETE) with Store Owner PIN verification
+app.use(
+  '/api/v1',
+  asyncHandler(async (req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+      return next();
+    }
+    if (req.path.startsWith('/auth')) {
+      return next();
+    }
+    const headerPin = req.headers['x-store-pin'];
+    await authService.verifyPin(headerPin);
+    next();
+  })
+);
 
 // Dashboard Summary
 app.get(
