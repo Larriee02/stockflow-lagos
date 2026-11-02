@@ -1,189 +1,85 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const bcrypt = require('bcryptjs');
+const env = require('./env');
+const { STARTER_CATALOG } = require('../db/starterCatalog');
 
-const STORE_FILE = path.join(os.tmpdir(), 'stockflow-lagos-store-zero-v2.json');
-
-const INITIAL_STATE = {
-  store_settings: {
-    store_pin: process.env.STORE_PIN || '1234',
-  },
-  products: [
-    {
-      id: 1,
-      sku: 'PRV-001',
-      name: 'Peak Milk Powder Sachet (Roll x12)',
-      category: 'Milk & Drinks',
-      unit: 'Roll',
-      cost_price: 2600.0,
-      selling_price: 3000.0,
-      stock_quantity: 0,
-      reorder_level: 8,
-      supplier_name: 'Oke-Arin Wholesale',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 2,
-      sku: 'PRV-002',
-      name: 'Milo Activ-Go Sachet (Roll x10)',
-      category: 'Milk & Drinks',
-      unit: 'Roll',
-      cost_price: 2100.0,
-      selling_price: 2500.0,
-      stock_quantity: 0,
-      reorder_level: 8,
-      supplier_name: 'Oke-Arin Wholesale',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 3,
-      sku: 'NDL-003',
-      name: 'Indomie Super Pack 120g (Carton x40)',
-      category: 'Noodles & Pasta',
-      unit: 'Carton',
-      cost_price: 14200.0,
-      selling_price: 16000.0,
-      stock_quantity: 0,
-      reorder_level: 6,
-      supplier_name: 'Mushin Market Depot',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 4,
-      sku: 'NDL-004',
-      name: 'Indomie Super Pack 120g (Single)',
-      category: 'Noodles & Pasta',
-      unit: 'Piece',
-      cost_price: 355.0,
-      selling_price: 450.0,
-      stock_quantity: 0,
-      reorder_level: 20,
-      supplier_name: 'Mushin Market Depot',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 5,
-      sku: 'GRN-005',
-      name: 'Golden Penny Semovita 2kg',
-      category: 'Swallow & Grains',
-      unit: 'Bag',
-      cost_price: 2850.0,
-      selling_price: 3300.0,
-      stock_quantity: 0,
-      reorder_level: 10,
-      supplier_name: 'Trade Fair Wholesaler',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 6,
-      sku: 'GRN-006',
-      name: 'Dangote Granulated Sugar 500g',
-      category: 'Provisions',
-      unit: 'Pack',
-      cost_price: 1150.0,
-      selling_price: 1400.0,
-      stock_quantity: 0,
-      reorder_level: 10,
-      supplier_name: 'Oke-Arin Wholesale',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 7,
-      sku: 'OIL-007',
-      name: 'Devon Kings Cooking Oil 1L Pouch',
-      category: 'Cooking Oil',
-      unit: 'Pouch',
-      cost_price: 2400.0,
-      selling_price: 2800.0,
-      stock_quantity: 0,
-      reorder_level: 6,
-      supplier_name: 'Trade Fair Wholesaler',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 8,
-      sku: 'CND-008',
-      name: 'Titus Sardine in Oil 125g',
-      category: 'Canned Food',
-      unit: 'Tin',
-      cost_price: 1150.0,
-      selling_price: 1400.0,
-      stock_quantity: 0,
-      reorder_level: 12,
-      supplier_name: 'Oke-Arin Wholesale',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 9,
-      sku: 'SNK-009',
-      name: 'Golden Morn Maize Cereal 900g',
-      category: 'Cereals & Snacks',
-      unit: 'Pack',
-      cost_price: 3600.0,
-      selling_price: 4200.0,
-      stock_quantity: 0,
-      reorder_level: 5,
-      supplier_name: 'Mushin Market Depot',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 10,
-      sku: 'HHS-010',
-      name: 'Sunlight Detergent Powder 900g',
-      category: 'Soap & Household',
-      unit: 'Pack',
-      cost_price: 1650.0,
-      selling_price: 2000.0,
-      stock_quantity: 0,
-      reorder_level: 8,
-      supplier_name: 'Trade Fair Wholesaler',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 11,
-      sku: 'DRK-011',
-      name: 'Eva Table Water 75cl (Pack x12)',
-      category: 'Milk & Drinks',
-      unit: 'Pack',
-      cost_price: 2400.0,
-      selling_price: 3000.0,
-      stock_quantity: 0,
-      reorder_level: 6,
-      supplier_name: 'Local Beverage Truck',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-    {
-      id: 12,
-      sku: 'BRD-012',
-      name: 'Agege / Sliced Family Loaf Bread',
-      category: 'Bread & Bakery',
-      unit: 'Loaf',
-      cost_price: 1200.0,
-      selling_price: 1500.0,
-      stock_quantity: 0,
-      reorder_level: 5,
-      supplier_name: 'Morning Bakery Supplier',
-      created_at: '2026-10-20T08:00:00.000Z',
-      updated_at: '2026-10-25T09:00:00.000Z',
-    },
-  ],
-  stock_movements: [],
-  cash_transactions: [],
-  credit_records: [],
-};
+const STORE_FILE = path.join(os.tmpdir(), 'stockflow-lagos-saas-v3.json');
 
 let memoryState = null;
+
+function buildInitialState() {
+  const adminEmail = env.ADMIN_EMAIL || 'admin@stockflowlagos.com';
+  const adminPassword = env.ADMIN_PASSWORD || 'Admin@2026';
+  const adminHash = bcrypt.hashSync(adminPassword, 10);
+  const now = new Date().toISOString();
+
+  const adminUser = {
+    id: 1,
+    email: adminEmail,
+    password_hash: adminHash,
+    full_name: env.ADMIN_NAME || 'StockFlow Super Admin',
+    business_name: 'StockFlow Lagos HQ',
+    phone: '08030000000',
+    business_type: 'Wholesale & Retail Provision Store',
+    city: 'Lagos',
+    address: 'Victoria Island, Lagos',
+    role: 'ADMIN',
+    status: 'APPROVED',
+    auth_provider: 'EMAIL',
+    google_sub: null,
+    apple_sub: null,
+    avatar_url: null,
+    admin_note: 'Primary platform administrator account',
+    token_version: 0,
+    must_change_password: false,
+    failed_login_attempts: 0,
+    locked_until: null,
+    last_login_at: now,
+    approved_at: now,
+    approved_by: 1,
+    created_at: now,
+    updated_at: now,
+  };
+
+  const products = STARTER_CATALOG.map(
+    ([sku, name, category, unit, cost, sell, reorder, supplier], idx) => ({
+      id: idx + 1,
+      user_id: 1,
+      sku,
+      name,
+      category,
+      unit,
+      cost_price: Number(cost),
+      selling_price: Number(sell),
+      stock_quantity: 0,
+      reorder_level: Number(reorder),
+      supplier_name: supplier,
+      created_at: now,
+      updated_at: now,
+    })
+  );
+
+  return {
+    users: [adminUser],
+    audit_logs: [
+      {
+        id: 1,
+        actor_user_id: 1,
+        action: 'SYSTEM_BOOTSTRAP',
+        target_user_id: 1,
+        details: { note: 'Platform Admin initialized' },
+        ip_address: '127.0.0.1',
+        created_at: now,
+      },
+    ],
+    products,
+    stock_movements: [],
+    cash_transactions: [],
+    credit_records: [],
+  };
+}
 
 function loadState() {
   if (memoryState) return memoryState;
@@ -193,9 +89,9 @@ function loadState() {
       return memoryState;
     }
   } catch {
-    // Fallback to initial state
+    // Fallback
   }
-  memoryState = JSON.parse(JSON.stringify(INITIAL_STATE));
+  memoryState = buildInitialState();
   saveState(memoryState);
   return memoryState;
 }
@@ -213,77 +109,529 @@ function nextId(list) {
   return list.length ? Math.max(...list.map((i) => Number(i.id) || 0)) + 1 : 1;
 }
 
+function toPublicUser(u, includeAdmin = false) {
+  if (!u) return null;
+  const base = {
+    id: u.id,
+    email: u.email,
+    full_name: u.full_name,
+    business_name: u.business_name,
+    phone: u.phone,
+    business_type: u.business_type,
+    city: u.city,
+    address: u.address,
+    role: u.role,
+    status: u.status,
+    auth_provider: u.auth_provider,
+    avatar_url: u.avatar_url,
+    must_change_password: Boolean(u.must_change_password),
+    last_login_at: u.last_login_at,
+    approved_at: u.approved_at,
+    created_at: u.created_at,
+    updated_at: u.updated_at,
+    has_password: Boolean(u.password_hash),
+    google_linked: Boolean(u.google_sub),
+    apple_linked: Boolean(u.apple_sub),
+  };
+  if (includeAdmin) {
+    base.admin_note = u.admin_note || null;
+    base.approved_by = u.approved_by || null;
+    base.failed_login_attempts = u.failed_login_attempts || 0;
+    base.locked_until = u.locked_until || null;
+  }
+  return base;
+}
+
 async function executeQuery(text, params = []) {
   const sql = text.replace(/\s+/g, ' ').trim();
   const upper = sql.toUpperCase();
   const state = loadState();
 
-  // Transaction control statements
   if (upper === 'BEGIN' || upper === 'COMMIT' || upper === 'ROLLBACK') {
     return { rows: [], rowCount: 0 };
   }
 
-  // 1. Store settings queries
-  if (upper.startsWith('CREATE TABLE IF NOT EXISTS STORE_SETTINGS')) {
-    return { rows: [], rowCount: 0 };
+  // ----------------------- USERS & AUTH QUERIES -----------------------
+
+  if (upper === 'SELECT * FROM USERS WHERE ID = $1') {
+    const u = state.users.find((x) => Number(x.id) === Number(params[0]));
+    return { rows: u ? [{ ...u }] : [], rowCount: u ? 1 : 0 };
   }
-  if (upper.startsWith('INSERT INTO STORE_SETTINGS')) {
-    if (!state.store_settings.store_pin) {
-      state.store_settings.store_pin = params[0] || '1234';
+
+  if (upper === 'SELECT * FROM USERS WHERE LOWER(EMAIL) = LOWER($1)') {
+    const email = String(params[0] || '').toLowerCase();
+    const u = state.users.find((x) => String(x.email).toLowerCase() === email);
+    return { rows: u ? [{ ...u }] : [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('SELECT * FROM USERS WHERE GOOGLE_SUB = $1')) {
+    const u = state.users.find((x) => x.google_sub && x.google_sub === params[0]);
+    return { rows: u ? [{ ...u }] : [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('SELECT * FROM USERS WHERE APPLE_SUB = $1')) {
+    const u = state.users.find((x) => x.apple_sub && x.apple_sub === params[0]);
+    return { rows: u ? [{ ...u }] : [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.includes('FROM USERS WHERE ID = $1') && upper.includes('HAS_PASSWORD')) {
+    const includeAdmin = upper.includes('ADMIN_NOTE');
+    const u = state.users.find((x) => Number(x.id) === Number(params[0]));
+    const mapped = toPublicUser(u, includeAdmin);
+    return { rows: mapped ? [mapped] : [], rowCount: mapped ? 1 : 0 };
+  }
+
+  if (upper.startsWith('INSERT INTO USERS')) {
+    const [
+      email,
+      password_hash,
+      full_name,
+      business_name,
+      phone,
+      business_type,
+      city,
+      role,
+      status,
+      auth_provider,
+      google_sub,
+      apple_sub,
+      avatar_url,
+      approved_at,
+    ] = params;
+    const now = new Date().toISOString();
+    const newUser = {
+      id: nextId(state.users),
+      email: String(email).toLowerCase(),
+      password_hash: password_hash || null,
+      full_name,
+      business_name: business_name || '',
+      phone: phone || null,
+      business_type: business_type || 'Provision Store',
+      city: city || 'Lagos',
+      address: null,
+      role: role || 'USER',
+      status: status || 'PENDING',
+      auth_provider: auth_provider || 'EMAIL',
+      google_sub: google_sub || null,
+      apple_sub: apple_sub || null,
+      avatar_url: avatar_url || null,
+      admin_note: null,
+      token_version: 0,
+      must_change_password: false,
+      failed_login_attempts: 0,
+      locked_until: null,
+      last_login_at: now,
+      approved_at: approved_at ? new Date(approved_at).toISOString() : null,
+      approved_by: null,
+      created_at: now,
+      updated_at: now,
+    };
+    state.users.push(newUser);
+    saveState(state);
+    return { rows: [{ id: newUser.id }], rowCount: 1 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET GOOGLE_SUB = $1')) {
+    const [sub, avatar, id] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.google_sub = sub;
+      u.avatar_url = u.avatar_url || avatar;
+      u.updated_at = new Date().toISOString();
       saveState(state);
     }
-    return { rows: [], rowCount: 1 };
+    return { rows: [], rowCount: u ? 1 : 0 };
   }
-  if (upper.includes("FROM STORE_SETTINGS WHERE KEY = 'STORE_PIN'")) {
+
+  if (upper.startsWith('UPDATE USERS SET APPLE_SUB = $1')) {
+    const [sub, avatar, id] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.apple_sub = sub;
+      u.avatar_url = u.avatar_url || avatar;
+      u.updated_at = new Date().toISOString();
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET LAST_LOGIN_AT = NOW()')) {
+    const u = state.users.find((x) => Number(x.id) === Number(params[0]));
+    if (u) {
+      u.last_login_at = new Date().toISOString();
+      u.failed_login_attempts = 0;
+      u.locked_until = null;
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET FAILED_LOGIN_ATTEMPTS')) {
+    const [id, maxAttempts, lockMinutes] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.failed_login_attempts = (u.failed_login_attempts || 0) + 1;
+      if (u.failed_login_attempts >= Number(maxAttempts)) {
+        u.locked_until = new Date(Date.now() + Number(lockMinutes) * 60000).toISOString();
+      }
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET FULL_NAME = $1')) {
+    const [full_name, business_name, phone, business_type, city, address, id] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.full_name = full_name;
+      u.business_name = business_name;
+      u.phone = phone;
+      u.business_type = business_type;
+      u.city = city;
+      u.address = address;
+      u.updated_at = new Date().toISOString();
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET PASSWORD_HASH = $1')) {
+    const [hash, mustChange, bump, id] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.password_hash = hash;
+      u.must_change_password = Boolean(mustChange);
+      u.token_version = (u.token_version || 0) + Number(bump || 0);
+      u.failed_login_attempts = 0;
+      u.locked_until = null;
+      u.updated_at = new Date().toISOString();
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET TOKEN_VERSION = TOKEN_VERSION + 1')) {
+    const u = state.users.find((x) => Number(x.id) === Number(params[0]));
+    if (u) {
+      u.token_version = (u.token_version || 0) + 1;
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.includes("SELECT COUNT(*)::INT AS N FROM USERS WHERE ROLE = 'ADMIN'")) {
+    const n = state.users.filter((u) => u.role === 'ADMIN' && u.status === 'APPROVED').length;
+    return { rows: [{ n }], rowCount: 1 };
+  }
+
+  // ----------------------- ADMIN QUERIES -----------------------
+
+  if (upper.includes('AS TOTAL_USERS') && upper.includes('AS PENDING_USERS')) {
+    const sevenDaysAgo = Date.now() - 7 * 86400000;
+    const users = state.users;
     return {
-      rows: [{ value: state.store_settings.store_pin || '1234' }],
+      rows: [
+        {
+          total_users: users.length,
+          pending_users: users.filter((u) => u.status === 'PENDING').length,
+          approved_users: users.filter((u) => u.status === 'APPROVED').length,
+          suspended_users: users.filter((u) => u.status === 'SUSPENDED').length,
+          rejected_users: users.filter((u) => u.status === 'REJECTED').length,
+          admin_users: users.filter((u) => u.role === 'ADMIN').length,
+          signups_7d: users.filter((u) => new Date(u.created_at).getTime() >= sevenDaysAgo).length,
+          active_7d: users.filter(
+            (u) => u.last_login_at && new Date(u.last_login_at).getTime() >= sevenDaysAgo
+          ).length,
+          google_users: users.filter((u) => u.auth_provider === 'GOOGLE').length,
+          apple_users: users.filter((u) => u.auth_provider === 'APPLE').length,
+          email_users: users.filter((u) => u.auth_provider === 'EMAIL').length,
+        },
+      ],
       rowCount: 1,
     };
   }
-  if (upper.startsWith('UPDATE STORE_SETTINGS SET VALUE')) {
-    state.store_settings.store_pin = String(params[0]);
+
+  if (upper.includes('AS PLATFORM_INFLOW')) {
+    const platform_inflow = state.cash_transactions
+      .filter((t) => t.type === 'INFLOW')
+      .reduce((s, t) => s + Number(t.amount), 0)
+      .toFixed(2);
+    return {
+      rows: [
+        {
+          platform_inflow,
+          platform_transactions: state.cash_transactions.length,
+        },
+      ],
+      rowCount: 1,
+    };
+  }
+
+  if (upper.startsWith('SELECT COUNT(*)::INT AS TOTAL FROM USERS U')) {
+    let list = [...state.users];
+    let idx = 0;
+    if (upper.includes('U.EMAIL ILIKE')) {
+      const q = String(params[idx++] || '').replace(/%/g, '').toLowerCase();
+      list = list.filter(
+        (u) =>
+          u.email.toLowerCase().includes(q) ||
+          u.full_name.toLowerCase().includes(q) ||
+          (u.business_name || '').toLowerCase().includes(q) ||
+          (u.phone || '').toLowerCase().includes(q)
+      );
+    }
+    if (upper.includes('U.STATUS =')) {
+      const st = params[idx++];
+      list = list.filter((u) => u.status === st);
+    }
+    if (upper.includes('U.ROLE =')) {
+      const rl = params[idx++];
+      list = list.filter((u) => u.role === rl);
+    }
+    if (upper.includes('U.AUTH_PROVIDER =')) {
+      const pr = params[idx++];
+      list = list.filter((u) => u.auth_provider === pr);
+    }
+    return { rows: [{ total: list.length }], rowCount: 1 };
+  }
+
+  if (upper.includes('AS PRODUCT_COUNT') && upper.includes('FROM USERS U')) {
+    let list = [...state.users];
+    let idx = 0;
+    if (upper.includes('U.EMAIL ILIKE')) {
+      const q = String(params[idx++] || '').replace(/%/g, '').toLowerCase();
+      list = list.filter(
+        (u) =>
+          u.email.toLowerCase().includes(q) ||
+          u.full_name.toLowerCase().includes(q) ||
+          (u.business_name || '').toLowerCase().includes(q) ||
+          (u.phone || '').toLowerCase().includes(q)
+      );
+    }
+    if (upper.includes('U.STATUS =')) {
+      const st = params[idx++];
+      list = list.filter((u) => u.status === st);
+    }
+    if (upper.includes('U.ROLE =')) {
+      const rl = params[idx++];
+      list = list.filter((u) => u.role === rl);
+    }
+    if (upper.includes('U.AUTH_PROVIDER =')) {
+      const pr = params[idx++];
+      list = list.filter((u) => u.auth_provider === pr);
+    }
+
+    const pageSize = Number(params[params.length - 2]) || 25;
+    const offset = Number(params[params.length - 1]) || 0;
+    const isAsc = upper.includes(' ASC ');
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (upper.includes('ORDER BY LOWER(U.FULL_NAME)')) {
+        cmp = a.full_name.localeCompare(b.full_name);
+      } else if (upper.includes('ORDER BY LOWER(U.BUSINESS_NAME)')) {
+        cmp = (a.business_name || '').localeCompare(b.business_name || '');
+      } else if (upper.includes('ORDER BY LOWER(U.EMAIL)')) {
+        cmp = a.email.localeCompare(b.email);
+      } else if (upper.includes('ORDER BY U.STATUS')) {
+        cmp = a.status.localeCompare(b.status);
+      } else if (upper.includes('ORDER BY U.LAST_LOGIN_AT')) {
+        cmp = new Date(a.last_login_at || 0) - new Date(b.last_login_at || 0);
+      } else {
+        cmp = new Date(a.created_at || 0) - new Date(b.created_at || 0);
+      }
+      return isAsc ? cmp : -cmp;
+    });
+
+    const rows = list.slice(offset, offset + pageSize).map((u) => {
+      const pub = toPublicUser(u, true);
+      pub.product_count = state.products.filter((p) => Number(p.user_id) === Number(u.id)).length;
+      pub.total_inflow = state.cash_transactions
+        .filter((c) => Number(c.user_id) === Number(u.id) && c.type === 'INFLOW')
+        .reduce((s, c) => s + Number(c.amount), 0)
+        .toFixed(2);
+      return pub;
+    });
+
+    return { rows, rowCount: rows.length };
+  }
+
+  if (upper.includes('AS STOCK_RETAIL_VALUE') && upper.includes('AS ACTIVE_DEBTORS')) {
+    const uid = Number(params[0]);
+    const prods = state.products.filter((p) => Number(p.user_id) === uid);
+    const txs = state.cash_transactions.filter((t) => Number(t.user_id) === uid);
+    const movs = state.stock_movements.filter((m) => Number(m.user_id) === uid);
+    const creds = state.credit_records.filter((c) => Number(c.user_id) === uid);
+    return {
+      rows: [
+        {
+          product_count: prods.length,
+          stock_retail_value: prods
+            .reduce((s, p) => s + Number(p.stock_quantity) * Number(p.selling_price), 0)
+            .toFixed(2),
+          total_inflow: txs
+            .filter((t) => t.type === 'INFLOW')
+            .reduce((s, t) => s + Number(t.amount), 0)
+            .toFixed(2),
+          total_outflow: txs
+            .filter((t) => t.type === 'OUTFLOW')
+            .reduce((s, t) => s + Number(t.amount), 0)
+            .toFixed(2),
+          transaction_count: txs.length,
+          sale_count: movs.filter((m) => m.movement_type === 'SALE').length,
+          active_debtors: creds.filter((c) => c.status === 'OWING').length,
+          last_activity_at: txs.length ? txs[0].transaction_date : null,
+        },
+      ],
+      rowCount: 1,
+    };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET STATUS = $1')) {
+    const [status, adminId, note, id] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.status = status;
+      if (status === 'APPROVED') {
+        u.approved_at = new Date().toISOString();
+        u.approved_by = adminId;
+      }
+      if (note !== null && note !== undefined) u.admin_note = note;
+      if (status === 'SUSPENDED' || status === 'REJECTED') {
+        u.token_version = (u.token_version || 0) + 1;
+      }
+      u.updated_at = new Date().toISOString();
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET ROLE = $1')) {
+    const [role, id] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.role = role;
+      if (role === 'ADMIN') u.status = 'APPROVED';
+      u.token_version = (u.token_version || 0) + 1;
+      u.updated_at = new Date().toISOString();
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('UPDATE USERS SET ADMIN_NOTE = $1')) {
+    const [note, id] = params;
+    const u = state.users.find((x) => Number(x.id) === Number(id));
+    if (u) {
+      u.admin_note = note;
+      u.updated_at = new Date().toISOString();
+      saveState(state);
+    }
+    return { rows: [], rowCount: u ? 1 : 0 };
+  }
+
+  if (upper.startsWith('DELETE FROM USERS WHERE ID = $1')) {
+    const id = Number(params[0]);
+    state.users = state.users.filter((u) => Number(u.id) !== id);
     saveState(state);
     return { rows: [], rowCount: 1 };
   }
 
-  // 2. Dashboard Metrics CTE
+  if (upper.includes('FROM USERS ORDER BY CREATED_AT DESC LIMIT 10000')) {
+    return {
+      rows: state.users.map((u) => toPublicUser(u, false)),
+      rowCount: state.users.length,
+    };
+  }
+
+  // ----------------------- AUDIT LOGS -----------------------
+
+  if (upper.startsWith('INSERT INTO AUDIT_LOGS')) {
+    const [actor_user_id, action, target_user_id, details, ip_address] = params;
+    let parsedDetails = {};
+    try {
+      parsedDetails = typeof details === 'string' ? JSON.parse(details) : details || {};
+    } catch {
+      parsedDetails = {};
+    }
+    const entry = {
+      id: nextId(state.audit_logs),
+      actor_user_id: actor_user_id || null,
+      action,
+      target_user_id: target_user_id || null,
+      details: parsedDetails,
+      ip_address: ip_address || null,
+      created_at: new Date().toISOString(),
+    };
+    state.audit_logs.unshift(entry);
+    saveState(state);
+    return { rows: [entry], rowCount: 1 };
+  }
+
+  if (upper.startsWith('SELECT COUNT(*)::INT AS TOTAL FROM AUDIT_LOGS')) {
+    return { rows: [{ total: state.audit_logs.length }], rowCount: 1 };
+  }
+
+  if (upper.includes('FROM AUDIT_LOGS A')) {
+    let logs = [...state.audit_logs];
+    if (upper.includes('A.TARGET_USER_ID =')) {
+      const tid = Number(params[0]);
+      logs = logs.filter((a) => Number(a.target_user_id) === tid);
+    }
+    const rows = logs.slice(0, 40).map((a) => {
+      const actor = state.users.find((u) => Number(u.id) === Number(a.actor_user_id));
+      const target = state.users.find((u) => Number(u.id) === Number(a.target_user_id));
+      return {
+        ...a,
+        actor_name: actor?.full_name || null,
+        actor_email: actor?.email || null,
+        target_name: target?.full_name || null,
+        target_email: target?.email || null,
+      };
+    });
+    return { rows, rowCount: rows.length };
+  }
+
+  // ----------------------- MULTI-TENANT STORE QUERIES -----------------------
+
   if (upper.startsWith('WITH INV AS')) {
+    const uid = Number(params[0]);
     const todayStr = new Date().toISOString().slice(0, 10);
-    const total_products = state.products.length;
-    const low_stock_count = state.products.filter(
+    const prods = state.products.filter((p) => Number(p.user_id) === uid);
+    const txs = state.cash_transactions.filter((t) => Number(t.user_id) === uid);
+    const creds = state.credit_records.filter(
+      (c) => Number(c.user_id) === uid && c.status === 'OWING'
+    );
+
+    const total_products = prods.length;
+    const low_stock_count = prods.filter(
       (p) => Number(p.stock_quantity) <= Number(p.reorder_level)
     ).length;
-    const inventory_cost_value = state.products
+    const inventory_cost_value = prods
       .reduce((s, p) => s + Number(p.stock_quantity) * Number(p.cost_price), 0)
       .toFixed(2);
-    const inventory_retail_value = state.products
+    const inventory_retail_value = prods
       .reduce((s, p) => s + Number(p.stock_quantity) * Number(p.selling_price), 0)
       .toFixed(2);
-    const projected_gross_margin = state.products
+    const projected_gross_margin = prods
       .reduce(
         (s, p) => s + Number(p.stock_quantity) * (Number(p.selling_price) - Number(p.cost_price)),
         0
       )
       .toFixed(2);
 
-    const totalIn = state.cash_transactions
+    const totalIn = txs
       .filter((t) => t.type === 'INFLOW')
       .reduce((s, t) => s + Number(t.amount), 0);
-    const totalOut = state.cash_transactions
+    const totalOut = txs
       .filter((t) => t.type === 'OUTFLOW')
       .reduce((s, t) => s + Number(t.amount), 0);
-    const todayIn = state.cash_transactions
+    const todayIn = txs
       .filter((t) => t.type === 'INFLOW' && String(t.transaction_date).slice(0, 10) >= todayStr)
       .reduce((s, t) => s + Number(t.amount), 0);
-    const todayOut = state.cash_transactions
+    const todayOut = txs
       .filter((t) => t.type === 'OUTFLOW' && String(t.transaction_date).slice(0, 10) >= todayStr)
       .reduce((s, t) => s + Number(t.amount), 0);
-
-    const owingCredits = state.credit_records.filter((c) => c.status === 'OWING');
-    const active_debtors_count = owingCredits.length;
-    const total_credit_owed = owingCredits
-      .reduce((s, c) => s + Number(c.balance_due), 0)
-      .toFixed(2);
 
     return {
       rows: [
@@ -297,8 +645,8 @@ async function executeQuery(text, params = []) {
           total_outflow: totalOut.toFixed(2),
           today_inflow: todayIn.toFixed(2),
           today_outflow: todayOut.toFixed(2),
-          active_debtors_count,
-          total_credit_owed,
+          active_debtors_count: creds.length,
+          total_credit_owed: creds.reduce((s, c) => s + Number(c.balance_due), 0).toFixed(2),
           net_cash_balance: (totalIn - totalOut).toFixed(2),
         },
       ],
@@ -306,10 +654,10 @@ async function executeQuery(text, params = []) {
     };
   }
 
-  // Category Breakdown
-  if (upper.includes('FROM PRODUCTS GROUP BY CATEGORY')) {
+  if (upper.includes('FROM PRODUCTS WHERE USER_ID = $1 GROUP BY CATEGORY')) {
+    const uid = Number(params[0]);
     const map = {};
-    for (const p of state.products) {
+    for (const p of state.products.filter((x) => Number(x.user_id) === uid)) {
       if (!map[p.category]) {
         map[p.category] = { category: p.category, sku_count: 0, cost: 0, retail: 0 };
       }
@@ -328,10 +676,10 @@ async function executeQuery(text, params = []) {
     return { rows, rowCount: rows.length };
   }
 
-  // Channel Breakdown
-  if (upper.includes('FROM CASH_TRANSACTIONS GROUP BY PAYMENT_METHOD')) {
+  if (upper.includes('FROM CASH_TRANSACTIONS WHERE USER_ID = $1 GROUP BY PAYMENT_METHOD')) {
+    const uid = Number(params[0]);
     const map = {};
-    for (const t of state.cash_transactions) {
+    for (const t of state.cash_transactions.filter((x) => Number(x.user_id) === uid)) {
       const m = t.payment_method || 'CASH';
       if (!map[m]) map[m] = { payment_method: m, inflow: 0, outflow: 0 };
       if (t.type === 'INFLOW') map[m].inflow += Number(t.amount);
@@ -348,26 +696,58 @@ async function executeQuery(text, params = []) {
     return { rows, rowCount: rows.length };
   }
 
-  // 3. Products queries
-  if (upper.startsWith('SELECT * FROM PRODUCTS WHERE ID = $1')) {
-    const id = Number(params[0]);
-    const prod = state.products.find((p) => Number(p.id) === id);
+  if (upper.startsWith('SELECT * FROM PRODUCTS WHERE ID = $1 AND USER_ID = $2')) {
+    const [id, uid] = params;
+    const prod = state.products.find(
+      (p) => Number(p.id) === Number(id) && Number(p.user_id) === Number(uid)
+    );
     return { rows: prod ? [prod] : [], rowCount: prod ? 1 : 0 };
   }
 
   if (upper.startsWith('SELECT * FROM PRODUCTS')) {
-    let list = [...state.products];
-    list.sort((a, b) => {
-      const aLow = Number(a.stock_quantity) <= Number(a.reorder_level) ? 1 : 0;
-      const bLow = Number(b.stock_quantity) <= Number(b.reorder_level) ? 1 : 0;
-      if (aLow !== bLow) return bLow - aLow;
-      return a.name.localeCompare(b.name);
-    });
+    const uid = Number(params[0]);
+    const list = state.products
+      .filter((p) => Number(p.user_id) === uid)
+      .sort((a, b) => {
+        const aLow = Number(a.stock_quantity) <= Number(a.reorder_level) ? 1 : 0;
+        const bLow = Number(b.stock_quantity) <= Number(b.reorder_level) ? 1 : 0;
+        if (aLow !== bLow) return bLow - aLow;
+        return a.name.localeCompare(b.name);
+      });
     return { rows: list, rowCount: list.length };
   }
 
   if (upper.startsWith('INSERT INTO PRODUCTS')) {
+    if (upper.includes('ON CONFLICT (USER_ID, SKU) DO NOTHING')) {
+      const [user_id, sku, name, category, unit, cost_price, selling_price, reorder_level, supplier_name] =
+        params;
+      const exists = state.products.some(
+        (p) => Number(p.user_id) === Number(user_id) && p.sku.toUpperCase() === String(sku).toUpperCase()
+      );
+      if (exists) return { rows: [], rowCount: 0 };
+      const now = new Date().toISOString();
+      const created = {
+        id: nextId(state.products),
+        user_id: Number(user_id),
+        sku,
+        name,
+        category,
+        unit,
+        cost_price: Number(cost_price),
+        selling_price: Number(selling_price),
+        stock_quantity: 0,
+        reorder_level: Number(reorder_level),
+        supplier_name,
+        created_at: now,
+        updated_at: now,
+      };
+      state.products.push(created);
+      saveState(state);
+      return { rows: [created], rowCount: 1 };
+    }
+
     const [
+      user_id,
       sku,
       name,
       category,
@@ -378,7 +758,11 @@ async function executeQuery(text, params = []) {
       reorder_level,
       supplier_name,
     ] = params;
-    if (state.products.some((p) => p.sku.toUpperCase() === String(sku).toUpperCase())) {
+    if (
+      state.products.some(
+        (p) => Number(p.user_id) === Number(user_id) && p.sku.toUpperCase() === String(sku).toUpperCase()
+      )
+    ) {
       const err = new Error('Duplicate SKU');
       err.code = '23505';
       throw err;
@@ -386,6 +770,7 @@ async function executeQuery(text, params = []) {
     const now = new Date().toISOString();
     const created = {
       id: nextId(state.products),
+      user_id: Number(user_id),
       sku,
       name,
       category,
@@ -404,8 +789,10 @@ async function executeQuery(text, params = []) {
   }
 
   if (upper.startsWith('UPDATE PRODUCTS SET STOCK_QUANTITY = $1')) {
-    const [newStock, id] = params;
-    const prod = state.products.find((p) => Number(p.id) === Number(id));
+    const [newStock, id, uid] = params;
+    const prod = state.products.find(
+      (p) => Number(p.id) === Number(id) && Number(p.user_id) === Number(uid)
+    );
     if (prod) {
       prod.stock_quantity = Number(newStock);
       prod.updated_at = new Date().toISOString();
@@ -415,9 +802,11 @@ async function executeQuery(text, params = []) {
   }
 
   if (upper.startsWith('UPDATE PRODUCTS SET NAME = $1')) {
-    const [name, category, unit, cost_price, selling_price, reorder_level, supplier_name, id] =
+    const [name, category, unit, cost_price, selling_price, reorder_level, supplier_name, id, uid] =
       params;
-    const prod = state.products.find((p) => Number(p.id) === Number(id));
+    const prod = state.products.find(
+      (p) => Number(p.id) === Number(id) && Number(p.user_id) === Number(uid)
+    );
     if (!prod) return { rows: [], rowCount: 0 };
     prod.name = name;
     prod.category = category;
@@ -431,17 +820,46 @@ async function executeQuery(text, params = []) {
     return { rows: [prod], rowCount: 1 };
   }
 
-  // 4. Stock Movements queries
-  if (upper.startsWith('SELECT * FROM STOCK_MOVEMENTS WHERE IDEMPOTENCY_KEY = $1')) {
-    const found = state.stock_movements.find((m) => m.idempotency_key === params[0]);
+  if (upper.startsWith('DELETE FROM STOCK_MOVEMENTS WHERE PRODUCT_ID = $1')) {
+    const [pid, uid] = params;
+    state.stock_movements = state.stock_movements.filter(
+      (m) => !(Number(m.product_id) === Number(pid) && Number(m.user_id) === Number(uid))
+    );
+    saveState(state);
+    return { rows: [], rowCount: 1 };
+  }
+
+  if (upper.startsWith('DELETE FROM PRODUCTS WHERE ID = $1 AND USER_ID = $2')) {
+    const [id, uid] = params;
+    const before = state.products.length;
+    state.products = state.products.filter(
+      (p) => !(Number(p.id) === Number(id) && Number(p.user_id) === Number(uid))
+    );
+    saveState(state);
+    return { rows: [], rowCount: before - state.products.length };
+  }
+
+  if (upper.startsWith('DELETE FROM PRODUCTS WHERE USER_ID = $1')) {
+    const uid = Number(params[0]);
+    state.products = state.products.filter((p) => Number(p.user_id) !== uid);
+    saveState(state);
+    return { rows: [], rowCount: 1 };
+  }
+
+  if (upper.startsWith('SELECT * FROM STOCK_MOVEMENTS WHERE USER_ID = $1 AND IDEMPOTENCY_KEY = $2')) {
+    const [uid, key] = params;
+    const found = state.stock_movements.find(
+      (m) => Number(m.user_id) === Number(uid) && m.idempotency_key === key
+    );
     return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
   }
 
   if (upper.startsWith('SELECT SM.*, P.NAME AS PRODUCT_NAME')) {
-    const limit = Number(params[0]) || 200;
-    const rows = [...state.stock_movements]
+    const [uid, limit] = params;
+    const rows = state.stock_movements
+      .filter((m) => Number(m.user_id) === Number(uid))
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id)
-      .slice(0, limit)
+      .slice(0, Number(limit) || 250)
       .map((sm) => {
         const p = state.products.find((prod) => Number(prod.id) === Number(sm.product_id)) || {};
         return {
@@ -459,6 +877,7 @@ async function executeQuery(text, params = []) {
     let record;
     if (upper.includes("'SALE'")) {
       const [
+        user_id,
         product_id,
         quantity_change,
         previous_stock,
@@ -470,6 +889,7 @@ async function executeQuery(text, params = []) {
       ] = params;
       record = {
         id: nextId(state.stock_movements),
+        user_id: Number(user_id),
         idempotency_key: null,
         product_id: Number(product_id),
         movement_type: 'SALE',
@@ -484,6 +904,7 @@ async function executeQuery(text, params = []) {
       };
     } else {
       const [
+        user_id,
         idempotency_key,
         product_id,
         movement_type,
@@ -497,6 +918,7 @@ async function executeQuery(text, params = []) {
       ] = params;
       record = {
         id: nextId(state.stock_movements),
+        user_id: Number(user_id),
         idempotency_key,
         product_id: Number(product_id),
         movement_type,
@@ -515,24 +937,28 @@ async function executeQuery(text, params = []) {
     return { rows: [record], rowCount: 1 };
   }
 
-  // 5. Cash Transactions queries
-  if (upper.startsWith('SELECT * FROM CASH_TRANSACTIONS WHERE IDEMPOTENCY_KEY = $1')) {
-    const found = state.cash_transactions.find((t) => t.idempotency_key === params[0]);
+  if (upper.startsWith('DELETE FROM STOCK_MOVEMENTS WHERE USER_ID = $1')) {
+    const uid = Number(params[0]);
+    state.stock_movements = state.stock_movements.filter((m) => Number(m.user_id) !== uid);
+    saveState(state);
+    return { rows: [], rowCount: 1 };
+  }
+
+  if (upper.startsWith('SELECT * FROM CASH_TRANSACTIONS WHERE USER_ID = $1 AND IDEMPOTENCY_KEY = $2')) {
+    const [uid, key] = params;
+    const found = state.cash_transactions.find(
+      (t) => Number(t.user_id) === Number(uid) && t.idempotency_key === key
+    );
     return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
   }
 
   if (upper.startsWith('SELECT * FROM CASH_TRANSACTIONS')) {
-    let list = [...state.cash_transactions];
-    if (upper.includes('TYPE = $')) {
-      const tVal = params.find((p) => p === 'INFLOW' || p === 'OUTFLOW');
-      if (tVal) list = list.filter((t) => t.type === tVal);
-    }
-    if (upper.includes('PAYMENT_METHOD = $')) {
-      const mVal = params.find((p) =>
-        ['CASH', 'POS', 'BANK_TRANSFER', 'MOBILE_MONEY'].includes(p)
-      );
-      if (mVal) list = list.filter((t) => t.payment_method === mVal);
-    }
+    const uid = Number(params[0]);
+    let list = state.cash_transactions.filter((t) => Number(t.user_id) === uid);
+    const tVal = params.find((p) => p === 'INFLOW' || p === 'OUTFLOW');
+    if (tVal) list = list.filter((t) => t.type === tVal);
+    const mVal = params.find((p) => ['CASH', 'POS', 'BANK_TRANSFER', 'MOBILE_MONEY'].includes(p));
+    if (mVal) list = list.filter((t) => t.payment_method === mVal);
     list.sort(
       (a, b) => new Date(b.transaction_date) - new Date(a.transaction_date) || b.id - a.id
     );
@@ -542,9 +968,11 @@ async function executeQuery(text, params = []) {
   if (upper.startsWith('INSERT INTO CASH_TRANSACTIONS')) {
     let tx;
     if (upper.includes("'COUNTER SALES'")) {
-      const [amount, payment_method, counterparty_name, description, stock_movement_id] = params;
+      const [user_id, amount, payment_method, counterparty_name, description, stock_movement_id] =
+        params;
       tx = {
         id: nextId(state.cash_transactions),
+        user_id: Number(user_id),
         idempotency_key: null,
         type: 'INFLOW',
         category: 'Counter Sales',
@@ -556,9 +984,10 @@ async function executeQuery(text, params = []) {
         transaction_date: new Date().toISOString(),
       };
     } else if (upper.includes("'CREDIT REPAYMENT'")) {
-      const [amount, payment_method, counterparty_name, description] = params;
+      const [user_id, amount, payment_method, counterparty_name, description] = params;
       tx = {
         id: nextId(state.cash_transactions),
+        user_id: Number(user_id),
         idempotency_key: null,
         type: 'INFLOW',
         category: 'Credit Repayment',
@@ -569,8 +998,9 @@ async function executeQuery(text, params = []) {
         stock_movement_id: null,
         transaction_date: new Date().toISOString(),
       };
-    } else if (params.length === 8) {
+    } else if (params.length === 9) {
       const [
+        user_id,
         idempotency_key,
         type,
         category,
@@ -582,6 +1012,7 @@ async function executeQuery(text, params = []) {
       ] = params;
       tx = {
         id: nextId(state.cash_transactions),
+        user_id: Number(user_id),
         idempotency_key,
         type,
         category,
@@ -594,6 +1025,7 @@ async function executeQuery(text, params = []) {
       };
     } else {
       const [
+        user_id,
         idempotency_key,
         type,
         category,
@@ -604,6 +1036,7 @@ async function executeQuery(text, params = []) {
       ] = params;
       tx = {
         id: nextId(state.cash_transactions),
+        user_id: Number(user_id),
         idempotency_key,
         type,
         category,
@@ -620,25 +1053,36 @@ async function executeQuery(text, params = []) {
     return { rows: [tx], rowCount: 1 };
   }
 
-  if (upper.startsWith('DELETE FROM CASH_TRANSACTIONS WHERE ID = $1')) {
-    const id = Number(params[0]);
+  if (upper.startsWith('DELETE FROM CASH_TRANSACTIONS WHERE ID = $1 AND USER_ID = $2')) {
+    const [id, uid] = params;
     const before = state.cash_transactions.length;
-    state.cash_transactions = state.cash_transactions.filter((t) => Number(t.id) !== id);
+    state.cash_transactions = state.cash_transactions.filter(
+      (t) => !(Number(t.id) === Number(id) && Number(t.user_id) === Number(uid))
+    );
     saveState(state);
     return { rows: [], rowCount: before - state.cash_transactions.length };
   }
 
-  // 6. Credit / Debtors Book queries
-  if (upper.startsWith('SELECT * FROM CREDIT_RECORDS WHERE ID = $1')) {
-    const id = Number(params[0]);
-    const found = state.credit_records.find((c) => Number(c.id) === id);
+  if (upper.startsWith('DELETE FROM CASH_TRANSACTIONS WHERE USER_ID = $1')) {
+    const uid = Number(params[0]);
+    state.cash_transactions = state.cash_transactions.filter((t) => Number(t.user_id) !== uid);
+    saveState(state);
+    return { rows: [], rowCount: 1 };
+  }
+
+  if (upper.startsWith('SELECT * FROM CREDIT_RECORDS WHERE ID = $1 AND USER_ID = $2')) {
+    const [id, uid] = params;
+    const found = state.credit_records.find(
+      (c) => Number(c.id) === Number(id) && Number(c.user_id) === Number(uid)
+    );
     return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
   }
 
   if (upper.startsWith('SELECT * FROM CREDIT_RECORDS')) {
-    let list = [...state.credit_records];
-    if (params[0] && params[0] !== 'ALL') {
-      list = list.filter((c) => c.status === params[0]);
+    const uid = Number(params[0]);
+    let list = state.credit_records.filter((c) => Number(c.user_id) === uid);
+    if (params[1] && params[1] !== 'ALL') {
+      list = list.filter((c) => c.status === params[1]);
     }
     list.sort((a, b) => {
       if (a.status !== b.status) return a.status === 'OWING' ? -1 : 1;
@@ -648,11 +1092,20 @@ async function executeQuery(text, params = []) {
   }
 
   if (upper.startsWith('INSERT INTO CREDIT_RECORDS')) {
-    const [customer_name, phone, items_summary, total_amount, amount_paid, balance_due, status] =
-      params;
+    const [
+      user_id,
+      customer_name,
+      phone,
+      items_summary,
+      total_amount,
+      amount_paid,
+      balance_due,
+      status,
+    ] = params;
     const now = new Date().toISOString();
     const rec = {
       id: nextId(state.credit_records),
+      user_id: Number(user_id),
       customer_name,
       phone,
       items_summary,
@@ -669,8 +1122,10 @@ async function executeQuery(text, params = []) {
   }
 
   if (upper.startsWith('UPDATE CREDIT_RECORDS SET AMOUNT_PAID = $1')) {
-    const [amount_paid, balance_due, status, id] = params;
-    const rec = state.credit_records.find((c) => Number(c.id) === Number(id));
+    const [amount_paid, balance_due, status, id, uid] = params;
+    const rec = state.credit_records.find(
+      (c) => Number(c.id) === Number(id) && Number(c.user_id) === Number(uid)
+    );
     if (!rec) return { rows: [], rowCount: 0 };
     rec.amount_paid = Number(amount_paid);
     rec.balance_due = Number(balance_due);
@@ -680,13 +1135,17 @@ async function executeQuery(text, params = []) {
     return { rows: [rec], rowCount: 1 };
   }
 
+  if (upper.startsWith('DELETE FROM CREDIT_RECORDS WHERE USER_ID = $1')) {
+    const uid = Number(params[0]);
+    state.credit_records = state.credit_records.filter((c) => Number(c.user_id) !== uid);
+    saveState(state);
+    return { rows: [], rowCount: 1 };
+  }
+
   return { rows: [], rowCount: 0 };
 }
 
 module.exports = {
   query: executeQuery,
-  connect: async () => ({
-    query: executeQuery,
-    release: () => {},
-  }),
+  withTransaction: async (fn) => fn({ query: executeQuery }),
 };

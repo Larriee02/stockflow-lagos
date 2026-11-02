@@ -23,14 +23,24 @@ import {
   Moon,
   Calendar,
   XCircle,
-  Lock,
-  KeyRound,
+  ShieldCheck,
+  UserCheck,
+  LogOut,
+  Printer,
+  Copy,
+  FileText,
+  Sparkles,
+  Settings,
 } from 'lucide-react';
 import { useDebounce } from './hooks/useDebounce';
 import { Modal } from './components/ui/Modal';
 import { StatCard } from './components/ui/StatCard';
 import { Badge } from './components/ui/Badge';
 import { EmptyState } from './components/ui/EmptyState';
+import { AuthScreen } from './components/auth/AuthScreen';
+import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
+import { AdminConsole } from './components/admin/AdminConsole';
+import { apiFetch, setStoredToken } from './services/api';
 
 // Universal Cross-OS Nigerian Naira (₦) Formatter
 const formatNaira = (val) => {
@@ -108,128 +118,9 @@ export default function App() {
   const basketRef = useRef(null);
   const tabSectionRef = useRef(null);
 
-  const handleSelectTab = (tabId, scrollOnMobile = false) => {
-    setActiveTab(tabId);
-    if (scrollOnMobile && typeof window !== 'undefined' && window.innerWidth < 768) {
-      setTimeout(() => {
-        tabSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 40);
-    }
-  };
-
-  // Store Owner Security PIN Lock State
-  const [storePin, setStorePin] = useState(() => {
-    try {
-      return sessionStorage.getItem('stockflow_pin') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [isUnlocked, setIsUnlocked] = useState(() => {
-    try {
-      return Boolean(sessionStorage.getItem('stockflow_pin'));
-    } catch {
-      return false;
-    }
-  });
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState('');
-  const [verifyingPin, setVerifyingPin] = useState(false);
-  const [isDefaultPin, setIsDefaultPin] = useState(true);
-  const [showChangePinModal, setShowChangePinModal] = useState(false);
-  const [changePinForm, setChangePinForm] = useState({
-    current_pin: '',
-    new_pin: '',
-    confirm_pin: '',
-  });
-
-  useEffect(() => {
-    fetch('/api/v1/auth/status')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data && typeof data.isDefaultPin === 'boolean') {
-          setIsDefaultPin(data.isDefaultPin);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const handleUnlockStore = async (e) => {
-    if (e) e.preventDefault();
-    if (!pinInput.trim()) return;
-    setVerifyingPin(true);
-    setPinError('');
-    try {
-      const res = await fetch('/api/v1/auth/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: pinInput.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Incorrect Store PIN.');
-      const cleanPin = pinInput.trim();
-      setStorePin(cleanPin);
-      setIsUnlocked(true);
-      setIsDefaultPin(Boolean(data.isDefaultPin));
-      setPinInput('');
-      try {
-        sessionStorage.setItem('stockflow_pin', cleanPin);
-      } catch {
-        // Ignore sessionStorage error
-      }
-    } catch (err) {
-      setPinError(err.message || 'Incorrect Store PIN.');
-    } finally {
-      setVerifyingPin(false);
-    }
-  };
-
-  const handleLockStore = () => {
-    setIsUnlocked(false);
-    setStorePin('');
-    setPinInput('');
-    setPinError('');
-    try {
-      sessionStorage.removeItem('stockflow_pin');
-    } catch {
-      // Ignore sessionStorage error
-    }
-  };
-
-  const handleChangeStorePin = async (e) => {
-    e.preventDefault();
-    if (changePinForm.new_pin !== changePinForm.confirm_pin) {
-      return alert('New PIN and Confirm PIN do not match.');
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/v1/auth/change-pin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          current_pin: changePinForm.current_pin,
-          new_pin: changePinForm.new_pin,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to update Store PIN.');
-      const updatedPin = changePinForm.new_pin.trim();
-      setStorePin(updatedPin);
-      setIsDefaultPin(Boolean(data.isDefaultPin));
-      try {
-        sessionStorage.setItem('stockflow_pin', updatedPin);
-      } catch {
-        // Ignore
-      }
-      setShowChangePinModal(false);
-      setChangePinForm({ current_pin: '', new_pin: '', confirm_pin: '' });
-      showSuccessToast('Store Owner PIN updated successfully!');
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  // Authenticated SaaS User State
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
 
   const [activeTab, setActiveTab] = useState('counter');
   const [loading, setLoading] = useState(true);
@@ -276,6 +167,21 @@ export default function App() {
   const [repayAmount, setRepayAmount] = useState('');
   const [repayMethod, setRepayMethod] = useState('CASH');
 
+  // Discretionary MVP Feature Modals
+  const [lastReceipt, setLastReceipt] = useState(null);
+  const [showRestockModal, setShowRestockModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    full_name: '',
+    business_name: '',
+    phone: '',
+    location: '',
+  });
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: '',
+    new_password: '',
+  });
+
   // Forms
   const [productForm, setProductForm] = useState(INITIAL_PRODUCT_FORM);
   const [movementForm, setMovementForm] = useState({
@@ -289,50 +195,106 @@ export default function App() {
   });
   const [cashForm, setCashForm] = useState(INITIAL_CASH_FORM);
 
-  const showSuccessToast = (msg) => {
+  const showSuccessToast = useCallback((msg) => {
     setToast(msg);
-    setTimeout(() => setToast(''), 4000);
+    setTimeout(() => setToast(''), 4200);
+  }, []);
+
+  const handleSelectTab = (tabId, scrollOnMobile = false) => {
+    setActiveTab(tabId);
+    if (scrollOnMobile && typeof window !== 'undefined' && window.innerWidth < 768) {
+      setTimeout(() => {
+        tabSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 40);
+    }
   };
+
+  // Check active session on mount
+  const checkAuthSession = useCallback(async () => {
+    try {
+      const data = await apiFetch('/api/v1/auth/me');
+      if (data?.user) {
+        setCurrentUser(data.user);
+        setProfileForm({
+          full_name: data.user.full_name || '',
+          business_name: data.user.business_name || '',
+          phone: data.user.phone || '',
+          location: data.user.location || 'Lagos, Nigeria',
+        });
+      } else {
+        setCurrentUser(null);
+      }
+    } catch {
+      setCurrentUser(null);
+    } finally {
+      setAuthChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkAuthSession();
+  }, [checkAuthSession]);
+
+  const handleLogout = async () => {
+    try {
+      await apiFetch('/api/v1/auth/logout', { method: 'POST' });
+    } catch {
+      // Ignore network error on logout
+    }
+    setStoredToken('');
+    setCurrentUser(null);
+    setCart({});
+    setShowProfileModal(false);
+    setActiveTab('counter');
+  };
+
+  const isApprovedStoreAccess = Boolean(
+    currentUser && (currentUser.status === 'APPROVED' || currentUser.role === 'ADMIN')
+  );
 
   const fetchAllData = useCallback(
     async (signal) => {
+      if (!isApprovedStoreAccess) return;
       try {
         setError('');
         const txParams = new URLSearchParams();
         if (cashFilter !== 'ALL') txParams.set('type', cashFilter);
         if (channelFilter !== 'ALL') txParams.set('paymentMethod', channelFilter);
 
-        const [dashRes, prodRes, txRes, movRes, credRes] = await Promise.all([
-          fetch('/api/v1/dashboard', { signal }),
-          fetch('/api/v1/products', { signal }),
-          fetch(`/api/v1/transactions?${txParams.toString()}`, { signal }),
-          fetch('/api/v1/inventory/movements?limit=250', { signal }),
-          fetch('/api/v1/credits', { signal }),
+        const [dashData, prodData, txData, movData, credData] = await Promise.all([
+          apiFetch('/api/v1/dashboard', { signal }),
+          apiFetch('/api/v1/products', { signal }),
+          apiFetch(`/api/v1/transactions?${txParams.toString()}`, { signal }),
+          apiFetch('/api/v1/inventory/movements?limit=250', { signal }),
+          apiFetch('/api/v1/credits', { signal }),
         ]);
 
-        if (!dashRes.ok) throw new Error('Failed to load API data');
-
-        setDashboard(await dashRes.json());
-        setProducts(await prodRes.json());
-        setTransactions(await txRes.json());
-        setMovements(await movRes.json());
-        setCredits(await credRes.json());
+        setDashboard(dashData || {});
+        setProducts(Array.isArray(prodData) ? prodData : []);
+        setTransactions(Array.isArray(txData) ? txData : []);
+        setMovements(Array.isArray(movData) ? movData : []);
+        setCredits(Array.isArray(credData) ? credData : []);
       } catch (err) {
+        if (err.status === 401 || err.status === 403) {
+          checkAuthSession();
+          return;
+        }
         if (err.name !== 'AbortError') {
-          setError('Cannot connect to server. Please make sure the backend is running.');
+          setError('Cannot connect to server. Please check your connection and try again.');
         }
       } finally {
         setLoading(false);
       }
     },
-    [cashFilter, channelFilter]
+    [cashFilter, channelFilter, isApprovedStoreAccess, checkAuthSession]
   );
 
   useEffect(() => {
+    if (!isApprovedStoreAccess) return;
     const controller = new AbortController();
     fetchAllData(controller.signal);
     return () => controller.abort();
-  }, [fetchAllData]);
+  }, [fetchAllData, isApprovedStoreAccess]);
 
   // Categories & Filtered Products
   const categories = useMemo(() => {
@@ -354,6 +316,28 @@ export default function App() {
       );
     });
   }, [products, debouncedSearch, categoryFilter, lowStockOnly]);
+
+  // Low-Stock Restock Generator Items (Discretionary MVP Feature)
+  const lowStockRestockPlan = useMemo(() => {
+    return products
+      .filter((p) => Number(p.stock_quantity) <= Number(p.reorder_level))
+      .map((p) => {
+        const current = Number(p.stock_quantity || 0);
+        const reorder = Number(p.reorder_level || 5);
+        const recommendedQty = Math.max(reorder * 2 - current, reorder, 5);
+        const unitCost = Number(p.cost_price || 0);
+        return {
+          ...p,
+          recommendedQty,
+          estimatedCost: recommendedQty * unitCost,
+        };
+      });
+  }, [products]);
+
+  const totalRestockBudget = useMemo(
+    () => lowStockRestockPlan.reduce((sum, item) => sum + item.estimatedCost, 0),
+    [lowStockRestockPlan]
+  );
 
   // Filtered History Movements + Period Summary
   const filteredMovements = useMemo(() => {
@@ -463,7 +447,7 @@ export default function App() {
     });
   };
 
-  // Complete Quick Counter Sale
+  // Complete Quick Counter Sale + Generate Instant Digital Receipt
   const handleQuickCheckout = async (e) => {
     e.preventDefault();
     if (cartItems.length === 0) return;
@@ -477,14 +461,18 @@ export default function App() {
       );
     }
 
+    const receiptItemsSnapshot = cartItems.map((i) => ({
+      name: i.product.name,
+      unit: i.product.unit,
+      quantity: i.quantity,
+      unitPrice: Number(i.product.selling_price),
+      lineTotal: i.lineTotal,
+    }));
+
     setSubmitting(true);
     try {
-      const res = await fetch('/api/v1/sales/checkout', {
+      await apiFetch('/api/v1/sales/checkout', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-store-pin': storePin,
-        },
         body: JSON.stringify({
           items: cartItems.map((i) => ({
             product_id: i.product.id,
@@ -496,12 +484,22 @@ export default function App() {
           customer_phone: customerPhone,
         }),
       });
-      const data = await res.json();
-      if (res.status === 401) {
-        handleLockStore();
-        throw new Error(data.error || 'Store PIN required.');
-      }
-      if (!res.ok) throw new Error(data.error);
+
+      // Build Instant Digital Receipt
+      setLastReceipt({
+        receiptNo: `SFL-${Date.now().toString().slice(-6)}`,
+        timestamp: new Date().toLocaleString(),
+        businessName: currentUser?.business_name || 'StockFlow Lagos Store',
+        location: currentUser?.location || 'Lagos, Nigeria',
+        cashierName: currentUser?.full_name || 'Store Owner',
+        customerName: customerName.trim() || 'Walk-in Customer',
+        customerPhone: customerPhone.trim() || '',
+        paymentMethod: checkoutMethod,
+        items: receiptItemsSnapshot,
+        totalBill: cartTotal,
+        amountPaid: paid,
+        balanceDue: Math.max(0, balance),
+      });
 
       setCart({});
       setIsPartPayment(false);
@@ -545,20 +543,10 @@ export default function App() {
       const autoSku =
         productForm.sku.trim() || `PRV-${Math.floor(100 + Math.random() * 900)}`;
 
-      const res = await fetch(url, {
+      await apiFetch(url, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-store-pin': storePin,
-        },
         body: JSON.stringify({ ...productForm, sku: autoSku }),
       });
-      const data = await res.json();
-      if (res.status === 401) {
-        handleLockStore();
-        throw new Error(data.error || 'Store PIN required.');
-      }
-      if (!res.ok) throw new Error(data.error);
 
       setShowProductModal(false);
       setEditingProduct(null);
@@ -572,29 +560,62 @@ export default function App() {
     }
   };
 
+  // Delete Product
+  const handleDeleteProduct = async (product) => {
+    if (
+      !window.confirm(
+        `Remove "${product.name}" and its movement history from your store shelf?`
+      )
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiFetch(`/api/v1/products/${product.id}`, {
+        method: 'DELETE',
+      });
+      setShowProductModal(false);
+      setEditingProduct(null);
+      showSuccessToast(`"${product.name}" removed from shelf.`);
+      fetchAllData();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Seed Starter Catalog
+  const handleSeedStarterCatalog = async () => {
+    setSubmitting(true);
+    try {
+      await apiFetch('/api/v1/products/seed-starter', {
+        method: 'POST',
+      });
+      showSuccessToast('Lagos Provision Starter Catalog loaded (0 stock)!');
+      fetchAllData();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Record Stock Movement (Restock / Shelf Count / Damaged)
   const handleRecordMovement = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await fetch('/api/v1/inventory/movements', {
+      await apiFetch('/api/v1/inventory/movements', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Idempotency-Key': `${selectedProduct.id}-${Date.now()}`,
-          'x-store-pin': storePin,
         },
         body: JSON.stringify({
           product_id: selectedProduct.id,
           ...movementForm,
         }),
       });
-      const data = await res.json();
-      if (res.status === 401) {
-        handleLockStore();
-        throw new Error(data.error || 'Store PIN required.');
-      }
-      if (!res.ok) throw new Error(data.error);
 
       setSelectedProduct(null);
       showSuccessToast('Stock level updated and logged in History!');
@@ -611,24 +632,14 @@ export default function App() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await fetch('/api/v1/transactions', {
+      await apiFetch('/api/v1/transactions', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-store-pin': storePin,
-        },
         body: JSON.stringify({
           ...cashForm,
           description: cashForm.description.trim() || cashForm.category,
           idempotency_key: `cash-${Date.now()}`,
         }),
       });
-      const data = await res.json();
-      if (res.status === 401) {
-        handleLockStore();
-        throw new Error(data.error || 'Store PIN required.');
-      }
-      if (!res.ok) throw new Error(data.error);
 
       setShowCashModal(false);
       setCashForm(INITIAL_CASH_FORM);
@@ -647,23 +658,13 @@ export default function App() {
     if (!repayingCredit) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/v1/credits/${repayingCredit.id}/repay`, {
+      await apiFetch(`/api/v1/credits/${repayingCredit.id}/repay`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-store-pin': storePin,
-        },
         body: JSON.stringify({
           amount: repayAmount,
           payment_method: repayMethod,
         }),
       });
-      const data = await res.json();
-      if (res.status === 401) {
-        handleLockStore();
-        throw new Error(data.error || 'Store PIN required.');
-      }
-      if (!res.ok) throw new Error(data.error);
 
       setRepayingCredit(null);
       setRepayAmount('');
@@ -679,17 +680,49 @@ export default function App() {
   const handleDeleteCashTx = async (id) => {
     if (!window.confirm('Delete this cashbook entry?')) return;
     try {
-      const res = await fetch(`/api/v1/transactions/${id}`, {
+      await apiFetch(`/api/v1/transactions/${id}`, {
         method: 'DELETE',
-        headers: { 'x-store-pin': storePin },
       });
-      if (res.status === 401) {
-        handleLockStore();
-        return alert('Store PIN required.');
-      }
-      if (res.ok) fetchAllData();
-    } catch (err) {
+      fetchAllData();
+    } catch {
       alert('Could not delete transaction.');
+    }
+  };
+
+  // Update Store Profile
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const data = await apiFetch('/api/v1/auth/profile', {
+        method: 'PUT',
+        body: JSON.stringify(profileForm),
+      });
+      setCurrentUser(data.user);
+      showSuccessToast('Store profile updated!');
+      setShowProfileModal(false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Change Account Password
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await apiFetch('/api/v1/auth/password', {
+        method: 'POST',
+        body: JSON.stringify(passwordForm),
+      });
+      setPasswordForm({ current_password: '', new_password: '' });
+      showSuccessToast('Account password updated!');
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -716,150 +749,81 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const navItems = [
-    { id: 'counter', label: '1. Quick Sell', shortLabel: 'Sell', icon: ShoppingCart },
-    { id: 'inventory', label: '2. Shelf Stock', shortLabel: 'Stock', icon: ClipboardCheck },
-    { id: 'cashbook', label: '3. Money In/Out', shortLabel: 'Cash', icon: Wallet },
-    { id: 'history', label: '4. Check History', shortLabel: 'History', icon: History },
-    {
-      id: 'debtors',
-      label: `5. Debtors (${dashboard.active_debtors_count || 0})`,
-      shortLabel: 'Debtors',
-      icon: Users,
-    },
-    { id: 'analytics', label: '6. POS vs Cash', shortLabel: 'Summary', icon: BarChart3 },
-  ];
+  const navItems = useMemo(() => {
+    const base = [
+      { id: 'counter', label: '1. Quick Sell', shortLabel: 'Sell', icon: ShoppingCart },
+      { id: 'inventory', label: '2. Shelf Stock', shortLabel: 'Stock', icon: ClipboardCheck },
+      { id: 'cashbook', label: '3. Money In/Out', shortLabel: 'Cash', icon: Wallet },
+      { id: 'history', label: '4. Check History', shortLabel: 'History', icon: History },
+      {
+        id: 'debtors',
+        label: `5. Debtors (${dashboard.active_debtors_count || 0})`,
+        shortLabel: 'Debtors',
+        icon: Users,
+      },
+      { id: 'analytics', label: '6. POS vs Cash', shortLabel: 'Summary', icon: BarChart3 },
+    ];
+    if (currentUser?.role === 'ADMIN') {
+      base.push({
+        id: 'admin',
+        label: '7. Admin Control',
+        shortLabel: 'Admin',
+        icon: ShieldCheck,
+      });
+    }
+    return base;
+  }, [dashboard.active_debtors_count, currentUser?.role]);
 
-  if (!isUnlocked) {
+  // 1. Loading Session State
+  if (authChecking) {
     return (
-      <div className="min-h-screen flex flex-col justify-between p-4 sm:p-6">
-        <div className="max-w-7xl w-full mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-2xl liquid-glass-subtle text-theme-brand">
-              <Package className="w-5 h-5" />
-            </div>
-            <span className="font-extrabold font-luxury text-base sm:text-lg text-theme-primary">
-              StockFlow Lagos
-            </span>
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="liquid-glass rounded-3xl px-8 py-6 text-center space-y-2">
+          <div className="w-10 h-10 mx-auto rounded-2xl liquid-btn-primary flex items-center justify-center animate-pulse">
+            <Package className="w-5 h-5" />
           </div>
-          <button
-            type="button"
-            onClick={() => setDarkMode(!darkMode)}
-            className="liquid-glass-subtle px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 text-theme-primary cursor-pointer"
-          >
-            {darkMode ? (
-              <>
-                <Sun className="w-4 h-4 text-amber-400" />
-                <span>Light Mode</span>
-              </>
-            ) : (
-              <>
-                <Moon className="w-4 h-4 text-theme-brand" />
-                <span>Dark Mode</span>
-              </>
-            )}
-          </button>
+          <p className="text-xs font-bold text-theme-secondary">
+            Loading StockFlow Lagos Workspace...
+          </p>
         </div>
-
-        <div className="max-w-md w-full mx-auto my-auto py-6">
-          <div className="liquid-glass rounded-3xl p-6 sm:p-8 space-y-6">
-            <div className="text-center space-y-2">
-              <div className="w-14 h-14 mx-auto rounded-2xl liquid-btn-primary flex items-center justify-center shadow-lg">
-                <Lock className="w-7 h-7" />
-              </div>
-              <h1 className="text-xl sm:text-2xl font-extrabold font-luxury text-theme-primary">
-                Store Owner Security Lock
-              </h1>
-              <p className="text-xs sm:text-sm text-theme-secondary">
-                Enter your Store Owner PIN to access inventory, counter checkout, and your Naira
-                cashbook.
-              </p>
-            </div>
-
-            <form onSubmit={handleUnlockStore} className="space-y-4">
-              <div>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  autoFocus
-                  maxLength={8}
-                  placeholder="Enter Store PIN"
-                  value={pinInput}
-                  onChange={(e) => {
-                    setPinError('');
-                    setPinInput(e.target.value.replace(/\D/g, ''));
-                  }}
-                  className="liquid-input w-full text-center text-2xl font-extrabold tracking-[0.45em] rounded-2xl px-4 py-3.5"
-                />
-                {pinError && (
-                  <p className="text-xs font-bold text-theme-outflow text-center mt-2">
-                    {pinError}
-                  </p>
-                )}
-              </div>
-
-              {/* Tactile Number Pad for Counter Touchscreens & Phones */}
-              <div className="grid grid-cols-3 gap-2.5">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
-                  <button
-                    key={digit}
-                    type="button"
-                    onClick={() => {
-                      setPinError('');
-                      setPinInput((prev) => (prev.length < 8 ? `${prev}${digit}` : prev));
-                    }}
-                    className="liquid-glass-subtle hover:scale-[1.02] active:scale-95 py-3 rounded-2xl text-lg font-extrabold font-luxury text-theme-primary cursor-pointer"
-                  >
-                    {digit}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPinError('');
-                    setPinInput('');
-                  }}
-                  className="liquid-glass-subtle py-3 rounded-2xl text-xs font-bold text-theme-secondary cursor-pointer"
-                >
-                  Clear
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPinError('');
-                    setPinInput((prev) => (prev.length < 8 ? `${prev}0` : prev));
-                  }}
-                  className="liquid-glass-subtle hover:scale-[1.02] active:scale-95 py-3 rounded-2xl text-lg font-extrabold font-luxury text-theme-primary cursor-pointer"
-                >
-                  0
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPinError('');
-                    setPinInput((prev) => prev.slice(0, -1));
-                  }}
-                  className="liquid-glass-subtle py-3 rounded-2xl text-xs font-bold text-theme-secondary cursor-pointer"
-                >
-                  ⌫ Back
-                </button>
-              </div>
-
-              <button
-                type="submit"
-                disabled={verifyingPin || !pinInput}
-                className="liquid-btn-primary w-full py-3.5 rounded-2xl text-sm font-extrabold tracking-wide cursor-pointer disabled:opacity-50"
-              >
-                {verifyingPin ? 'Verifying Store PIN...' : 'Unlock Shop Counter'}
-              </button>
-            </form>
-          </div>
-        </div>
-
-        <p className="text-center text-[11px] text-theme-muted">
-          Protected by StockFlow Lagos Store Owner PIN Security
-        </p>
       </div>
+    );
+  }
+
+  // 2. Unauthenticated -> Render Production Sign In / Sign Up / Google & Apple OAuth Screen
+  if (!currentUser) {
+    return (
+      <AuthScreen
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        onAuthenticated={(user) => {
+          setCurrentUser(user);
+          setProfileForm({
+            full_name: user.full_name || '',
+            business_name: user.business_name || '',
+            phone: user.phone || '',
+            location: user.location || 'Lagos, Nigeria',
+          });
+          if (user.role === 'ADMIN') {
+            showSuccessToast(`Welcome back, ${user.full_name} (Super Admin)!`);
+          } else {
+            showSuccessToast(`Welcome to ${user.business_name}!`);
+          }
+        }}
+      />
+    );
+  }
+
+  // 3. Pending Approval / Suspended / Rejected -> Render Account Governance Screen
+  if (currentUser.status !== 'APPROVED' && currentUser.role !== 'ADMIN') {
+    return (
+      <AccountStatusScreen
+        user={currentUser}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        onUserUpdated={setCurrentUser}
+        onLogout={handleLogout}
+      />
     );
   }
 
@@ -881,22 +845,41 @@ export default function App() {
                   style={{ color: '#f8f6f0' }}
                   className="text-base sm:text-xl font-extrabold font-luxury tracking-tight truncate"
                 >
-                  StockFlow Lagos
+                  {currentUser.business_name || 'StockFlow Lagos'}
                 </h1>
                 <span
                   style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.25)' }}
                   className="hidden xs:inline-block text-[10px] sm:text-[11px] bg-white/12 text-sky-100 border border-white/20 px-2.5 py-0.5 rounded-full font-bold backdrop-blur-xs"
                 >
-                  Provision & Retail (₦)
+                  {currentUser.role === 'ADMIN' ? 'Super Admin • ₦' : 'Verified Store • ₦'}
                 </span>
               </div>
               <p className="text-[11px] sm:text-xs text-stone-300/90 truncate font-medium">
-                Shop Counter, Shelf Stock-Taking, History & Cashbook
+                {currentUser.full_name} • {currentUser.location || 'Lagos, Nigeria'}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Admin Control Center Quick Switcher (For Admin Users) */}
+            {currentUser.role === 'ADMIN' && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleSelectTab(activeTab === 'admin' ? 'counter' : 'admin', true)
+                }
+                style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.28)' }}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-extrabold border backdrop-blur-md cursor-pointer ${
+                  activeTab === 'admin'
+                    ? 'bg-amber-400/25 text-amber-200 border-amber-300/40'
+                    : 'bg-white/15 hover:bg-white/25 text-sky-100 border-white/25'
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4 text-amber-300" />
+                <span>{activeTab === 'admin' ? 'Back to Store' : 'Admin Console'}</span>
+              </button>
+            )}
+
             {/* Smooth Dark / Light Mode Liquid Glass Toggle */}
             <button
               type="button"
@@ -904,17 +887,17 @@ export default function App() {
               title={darkMode ? 'Switch to Warm Light Mode' : 'Switch to Warm Dark Mode'}
               aria-label="Toggle color theme"
               style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
-              className="flex items-center gap-1.5 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-3 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
+              className="flex items-center gap-1.5 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
               {darkMode ? (
                 <>
                   <Sun className="w-4 h-4 text-amber-300" />
-                  <span className="hidden sm:inline">Light Mode</span>
+                  <span className="hidden lg:inline">Light</span>
                 </>
               ) : (
                 <>
                   <Moon className="w-4 h-4 text-sky-200" />
-                  <span className="hidden sm:inline">Dark Mode</span>
+                  <span className="hidden lg:inline">Dark</span>
                 </>
               )}
             </button>
@@ -929,7 +912,8 @@ export default function App() {
               className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>Add Goods</span>
+              <span className="hidden xs:inline">Add</span>
+              <span>Goods</span>
             </button>
 
             <button
@@ -946,24 +930,24 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => setShowChangePinModal(true)}
-              title="Change Store Owner PIN"
+              onClick={() => setShowProfileModal(true)}
+              title="Store Profile & Account Settings"
               style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
               className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
-              <KeyRound className="w-4 h-4 text-sky-200" />
-              <span className="hidden md:inline">PIN</span>
+              <Settings className="w-4 h-4 text-sky-200" />
+              <span className="hidden md:inline">Account</span>
             </button>
 
             <button
               type="button"
-              onClick={handleLockStore}
-              title="Lock Store Counter"
+              onClick={handleLogout}
+              title="Sign Out"
               style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
               className="flex items-center gap-1 bg-rose-500/25 hover:bg-rose-500/40 text-stone-100 border border-rose-300/35 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
-              <Lock className="w-4 h-4 text-rose-200" />
-              <span className="hidden sm:inline">Lock</span>
+              <LogOut className="w-4 h-4 text-rose-200" />
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
         </div>
@@ -1057,17 +1041,29 @@ export default function App() {
             }
             icon={AlertTriangle}
             loading={loading}
-            subtitle="Items running low on shelf"
+            subtitle={
+              <button
+                type="button"
+                onClick={() => setShowRestockModal(true)}
+                className="text-theme-brand font-extrabold underline cursor-pointer"
+              >
+                Generate Market Buying List →
+              </button>
+            }
           />
         </section>
 
-        {/* Responsive Liquid Glass Tab Navigation Bar (Visible on ALL Devices: 3x2 Grid on Mobile, Pill Row on Desktop) */}
+        {/* Responsive Liquid Glass Tab Navigation Bar (Visible on ALL Devices) */}
         <div
           ref={tabSectionRef}
           style={{ scrollMarginTop: '4.5rem' }}
           className="liquid-glass p-1.5 rounded-2xl"
         >
-          <div className="grid grid-cols-3 md:flex gap-1.5 w-full">
+          <div
+            className={`grid ${
+              navItems.length > 6 ? 'grid-cols-4 sm:grid-cols-7' : 'grid-cols-3'
+            } md:flex gap-1.5 w-full`}
+          >
             {navItems.map((t) => {
               const Icon = t.icon;
               const isActive = activeTab === t.id;
@@ -1090,6 +1086,11 @@ export default function App() {
             })}
           </div>
         </div>
+
+        {/* TAB 7: ADMIN CONTROL CENTER (APPROVE, CONTROL, SORT & MANAGE USERS) */}
+        {activeTab === 'admin' && currentUser.role === 'ADMIN' && (
+          <AdminConsole currentUser={currentUser} onToast={showSuccessToast} />
+        )}
 
         {/* TAB 1: QUICK SELL (SHOP COUNTER) */}
         {activeTab === 'counter' && (
@@ -1120,58 +1121,90 @@ export default function App() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {filteredProducts.map((p) => {
-                  const inBasket = cart[p.id] || 0;
-                  const stock = Number(p.stock_quantity);
-                  const isLow = stock <= Number(p.reorder_level);
-                  return (
-                    <div
-                      key={p.id}
-                      onClick={() => stock > 0 && addToCart(p)}
-                      style={
-                        inBasket > 0
-                          ? {
-                              backgroundColor: 'var(--brand-blue-soft)',
-                              borderColor: 'var(--brand-blue-border)',
-                            }
-                          : undefined
-                      }
-                      className={`liquid-glass-subtle p-4 rounded-2xl flex items-center justify-between gap-3 cursor-pointer select-none ${
-                        stock <= 0
-                          ? 'opacity-50 cursor-not-allowed'
-                          : 'hover:-translate-y-0.5 active:scale-[0.99]'
-                      }`}
-                    >
-                      <div className="space-y-1 min-w-0">
-                        <div className="font-extrabold font-luxury text-sm leading-snug break-words text-theme-primary">
-                          {p.name}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-extrabold tabular-nums text-theme-brand">
-                            {formatNaira(p.selling_price)} / {p.unit}
-                          </span>
-                          <Badge variant={isLow ? 'warning' : 'neutral'}>
-                            {stock} {p.unit} left
-                          </Badge>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (stock > 0) addToCart(p);
-                        }}
-                        className="liquid-btn-primary shrink-0 px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
+              {products.length === 0 ? (
+                <EmptyState
+                  icon={Package}
+                  title="Your store shelf is empty"
+                  description="Add your first provision item or load the 12-item Lagos Starter Catalog (with 0 stock) to begin."
+                  actionLabel="Load Lagos Starter Catalog"
+                  onAction={handleSeedStarterCatalog}
+                />
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {filteredProducts.map((p) => {
+                    const inBasket = cart[p.id] || 0;
+                    const stock = Number(p.stock_quantity);
+                    const isLow = stock <= Number(p.reorder_level);
+                    return (
+                      <div
+                        key={p.id}
+                        onClick={() => stock > 0 && addToCart(p)}
+                        style={
+                          inBasket > 0
+                            ? {
+                                backgroundColor: 'var(--brand-blue-soft)',
+                                borderColor: 'var(--brand-blue-border)',
+                              }
+                            : undefined
+                        }
+                        className={`liquid-glass-subtle p-4 rounded-2xl flex items-center justify-between gap-3 cursor-pointer select-none ${
+                          stock <= 0
+                            ? 'opacity-50 cursor-not-allowed'
+                            : 'hover:-translate-y-0.5 active:scale-[0.99]'
+                        }`}
                       >
-                        <Plus className="w-3.5 h-3.5" />
-                        {inBasket > 0 ? `Added (${inBasket})` : 'Sell'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                        <div className="space-y-1 min-w-0">
+                          <div className="font-extrabold font-luxury text-sm leading-snug break-words text-theme-primary">
+                            {p.name}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="font-extrabold tabular-nums text-theme-brand">
+                              {formatNaira(p.selling_price)} / {p.unit}
+                            </span>
+                            <Badge variant={isLow ? 'warning' : 'neutral'}>
+                              {stock} {p.unit} left
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {stock <= 0 ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedProduct(p);
+                              setMovementForm({
+                                movement_type: 'RESTOCK',
+                                quantity: '',
+                                record_cash: true,
+                                amount_paid: '',
+                                payment_method: 'CASH',
+                                counterparty_name: p.supplier_name || '',
+                                note: '',
+                              });
+                            }}
+                            className="liquid-glass-subtle shrink-0 px-3 py-2 rounded-xl text-xs font-extrabold text-theme-brand cursor-pointer"
+                          >
+                            + Restock
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (stock > 0) addToCart(p);
+                            }}
+                            className="liquid-btn-primary shrink-0 px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            {inBasket > 0 ? `Added (${inBasket})` : 'Sell'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Right Column: Liquid Glass Customer Basket */}
@@ -1189,22 +1222,33 @@ export default function App() {
                     Customer Basket
                   </h2>
                 </div>
-                {cartItems.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setCart({})}
-                    className="text-xs font-bold text-theme-outflow hover:underline cursor-pointer"
-                  >
-                    Clear All
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {lastReceipt && (
+                    <button
+                      type="button"
+                      onClick={() => setLastReceipt({ ...lastReceipt })}
+                      className="text-[11px] font-bold text-theme-brand hover:underline cursor-pointer flex items-center gap-1"
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Last Receipt
+                    </button>
+                  )}
+                  {cartItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCart({})}
+                      className="text-xs font-bold text-theme-outflow hover:underline cursor-pointer"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
               </div>
 
               {cartItems.length === 0 ? (
                 <div className="py-10 text-center space-y-2 text-theme-secondary">
                   <ShoppingCart className="w-8 h-8 mx-auto stroke-1 opacity-60" />
                   <p className="text-xs font-medium">
-                    Tap any provision item to add it to the customer&apos;s basket.
+                    Tap any provision item with stock to add it to the customer&apos;s basket.
                   </p>
                 </div>
               ) : (
@@ -1355,7 +1399,7 @@ export default function App() {
                   >
                     {submitting
                       ? 'Recording Sale...'
-                      : `Complete Sale (${formatNaira(cartTotal)})`}
+                      : `Complete Sale & Issue Receipt (${formatNaira(cartTotal)})`}
                   </button>
                 </form>
               )}
@@ -1383,13 +1427,21 @@ export default function App() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  type="button"
+                  onClick={() => setShowRestockModal(true)}
+                  className="liquid-btn-primary flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Market Restock Order ({lowStockRestockPlan.length})
+                </button>
+                <button
                   onClick={() => setLowStockOnly(!lowStockOnly)}
                   className={`flex-1 sm:flex-initial justify-center flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold cursor-pointer ${
                     lowStockOnly ? 'liquid-btn-primary' : 'liquid-glass-subtle'
                   }`}
                 >
                   <Filter className="w-3.5 h-3.5" />
-                  {lowStockOnly ? 'Showing Low Stock Only' : 'Market Shopping List (Low Stock)'}
+                  {lowStockOnly ? 'Showing Low Stock Only' : 'Filter Low Stock'}
                 </button>
                 <button
                   onClick={() =>
@@ -1668,124 +1720,134 @@ export default function App() {
               </select>
             </div>
 
-            {/* Mobile Card View (< 768px) */}
-            <div className="md:hidden divide-y theme-divider">
-              {transactions.map((tx) => (
-                <div key={tx.id} className="p-4 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Badge
-                      variant={tx.type === 'INFLOW' ? 'success' : 'danger'}
-                      icon={tx.type === 'INFLOW' ? ArrowUpRight : ArrowDownRight}
-                    >
-                      {tx.type === 'INFLOW' ? 'MONEY IN' : 'MONEY OUT'}
-                    </Badge>
-                    <span
-                      className={`text-base font-extrabold font-luxury tabular-nums ${
-                        tx.type === 'INFLOW'
-                          ? 'text-theme-inflow'
-                          : 'text-theme-outflow'
-                      }`}
-                    >
-                      {tx.type === 'INFLOW' ? '+' : '-'}
-                      {formatNaira(tx.amount)}
-                    </span>
-                  </div>
-                  <div className="font-bold text-sm text-theme-primary">
-                    {tx.category}
-                  </div>
-                  <div className="text-xs text-theme-secondary">
-                    {tx.counterparty_name ? `${tx.counterparty_name}: ` : ''}
-                    {tx.description}
-                  </div>
-                  <div className="flex items-center justify-between pt-1 text-[11px]">
-                    <Badge variant="neutral">
-                      {PAYMENT_CHANNEL_LABELS[tx.payment_method] || tx.payment_method}
-                    </Badge>
-                    <span className="text-theme-secondary">
-                      {new Date(tx.transaction_date).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Desktop Table View (>= 768px) */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead
-                  style={{
-                    backgroundColor: 'var(--bg-subtle)',
-                    borderColor: 'var(--border-outer)',
-                  }}
-                  className="border-b text-[11px] font-bold uppercase tracking-wider text-theme-secondary"
-                >
-                  <tr>
-                    <th className="py-3.5 px-4">Date & Time</th>
-                    <th className="py-3.5 px-4">Type</th>
-                    <th className="py-3.5 px-4">Category</th>
-                    <th className="py-3.5 px-4">Details</th>
-                    <th className="py-3.5 px-4">Payment Channel</th>
-                    <th className="py-3.5 px-4 text-right">Amount (₦)</th>
-                    <th className="py-3.5 px-4 text-right"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y theme-divider">
+            {transactions.length === 0 ? (
+              <EmptyState
+                icon={Wallet}
+                title="No cashbook entries recorded yet"
+                description="Sales at the counter, market restocks, and shop expenses will automatically appear here."
+              />
+            ) : (
+              <>
+                {/* Mobile Card View (< 768px) */}
+                <div className="md:hidden divide-y theme-divider">
                   {transactions.map((tx) => (
-                    <tr
-                      key={tx.id}
-                      className="hover:bg-white/30 dark:hover:bg-white/5"
-                    >
-                      <td className="py-3.5 px-4 text-xs tabular-nums text-theme-secondary">
-                        {new Date(tx.transaction_date).toLocaleString()}
-                      </td>
-                      <td className="py-3.5 px-4">
+                    <div key={tx.id} className="p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
                         <Badge
                           variant={tx.type === 'INFLOW' ? 'success' : 'danger'}
                           icon={tx.type === 'INFLOW' ? ArrowUpRight : ArrowDownRight}
                         >
                           {tx.type === 'INFLOW' ? 'MONEY IN' : 'MONEY OUT'}
                         </Badge>
-                      </td>
-                      <td className="py-3.5 px-4 font-extrabold font-luxury text-theme-primary">
+                        <span
+                          className={`text-base font-extrabold font-luxury tabular-nums ${
+                            tx.type === 'INFLOW'
+                              ? 'text-theme-inflow'
+                              : 'text-theme-outflow'
+                          }`}
+                        >
+                          {tx.type === 'INFLOW' ? '+' : '-'}
+                          {formatNaira(tx.amount)}
+                        </span>
+                      </div>
+                      <div className="font-bold text-sm text-theme-primary">
                         {tx.category}
-                      </td>
-                      <td className="py-3.5 px-4 text-theme-secondary">
-                        {tx.counterparty_name ? (
-                          <strong className="text-theme-primary">
-                            {tx.counterparty_name}:{' '}
-                          </strong>
-                        ) : null}
+                      </div>
+                      <div className="text-xs text-theme-secondary">
+                        {tx.counterparty_name ? `${tx.counterparty_name}: ` : ''}
                         {tx.description}
-                      </td>
-                      <td className="py-3.5 px-4">
+                      </div>
+                      <div className="flex items-center justify-between pt-1 text-[11px]">
                         <Badge variant="neutral">
                           {PAYMENT_CHANNEL_LABELS[tx.payment_method] || tx.payment_method}
                         </Badge>
-                      </td>
-                      <td
-                        className={`py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums ${
-                          tx.type === 'INFLOW'
-                            ? 'text-theme-inflow'
-                            : 'text-theme-outflow'
-                        }`}
-                      >
-                        {tx.type === 'INFLOW' ? '+' : '-'}
-                        {formatNaira(tx.amount)}
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => handleDeleteCashTx(tx.id)}
-                          title="Delete cash entry"
-                          className="p-1 text-theme-secondary hover:text-rose-500 cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
+                        <span className="text-theme-secondary">
+                          {new Date(tx.transaction_date).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+
+                {/* Desktop Table View (>= 768px) */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead
+                      style={{
+                        backgroundColor: 'var(--bg-subtle)',
+                        borderColor: 'var(--border-outer)',
+                      }}
+                      className="border-b text-[11px] font-bold uppercase tracking-wider text-theme-secondary"
+                    >
+                      <tr>
+                        <th className="py-3.5 px-4">Date & Time</th>
+                        <th className="py-3.5 px-4">Type</th>
+                        <th className="py-3.5 px-4">Category</th>
+                        <th className="py-3.5 px-4">Details</th>
+                        <th className="py-3.5 px-4">Payment Channel</th>
+                        <th className="py-3.5 px-4 text-right">Amount (₦)</th>
+                        <th className="py-3.5 px-4 text-right"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y theme-divider">
+                      {transactions.map((tx) => (
+                        <tr
+                          key={tx.id}
+                          className="hover:bg-white/30 dark:hover:bg-white/5"
+                        >
+                          <td className="py-3.5 px-4 text-xs tabular-nums text-theme-secondary">
+                            {new Date(tx.transaction_date).toLocaleString()}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <Badge
+                              variant={tx.type === 'INFLOW' ? 'success' : 'danger'}
+                              icon={tx.type === 'INFLOW' ? ArrowUpRight : ArrowDownRight}
+                            >
+                              {tx.type === 'INFLOW' ? 'MONEY IN' : 'MONEY OUT'}
+                            </Badge>
+                          </td>
+                          <td className="py-3.5 px-4 font-extrabold font-luxury text-theme-primary">
+                            {tx.category}
+                          </td>
+                          <td className="py-3.5 px-4 text-theme-secondary">
+                            {tx.counterparty_name ? (
+                              <strong className="text-theme-primary">
+                                {tx.counterparty_name}:{' '}
+                              </strong>
+                            ) : null}
+                            {tx.description}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <Badge variant="neutral">
+                              {PAYMENT_CHANNEL_LABELS[tx.payment_method] || tx.payment_method}
+                            </Badge>
+                          </td>
+                          <td
+                            className={`py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums ${
+                              tx.type === 'INFLOW'
+                                ? 'text-theme-inflow'
+                                : 'text-theme-outflow'
+                            }`}
+                          >
+                            {tx.type === 'INFLOW' ? '+' : '-'}
+                            {formatNaira(tx.amount)}
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            <button
+                              onClick={() => handleDeleteCashTx(tx.id)}
+                              title="Delete cash entry"
+                              className="p-1 text-theme-secondary hover:text-rose-500 cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -2147,7 +2209,9 @@ export default function App() {
                       .replace(/\D/g, '')
                       .replace(/^0/, '234');
                     const whatsappMsg = encodeURIComponent(
-                      `Hello ${c.customer_name}, friendly reminder from our provision store regarding your balance of ${formatNaira(
+                      `Hello ${c.customer_name}, friendly reminder from ${
+                        currentUser.business_name || 'our provision store'
+                      } regarding your balance of ${formatNaira(
                         c.balance_due
                       )} for (${c.items_summary}). Thank you!`
                     );
@@ -2223,7 +2287,9 @@ export default function App() {
                           .replace(/\D/g, '')
                           .replace(/^0/, '234');
                         const whatsappMsg = encodeURIComponent(
-                          `Hello ${c.customer_name}, friendly reminder from our provision store regarding your balance of ${formatNaira(
+                          `Hello ${c.customer_name}, friendly reminder from ${
+                            currentUser.business_name || 'our provision store'
+                          } regarding your balance of ${formatNaira(
                             c.balance_due
                           )} for (${c.items_summary}). Thank you!`
                         );
@@ -2422,7 +2488,9 @@ export default function App() {
       {/* LIQUID GLASS MOBILE BOTTOM NAVIGATION BAR (< 768px) */}
       <nav
         aria-label="Mobile Navigation"
-        className="md:hidden liquid-glass-elevated fixed bottom-0 left-0 right-0 z-50 border-t grid grid-cols-6 pb-safe px-1 pt-1"
+        className={`md:hidden liquid-glass-elevated fixed bottom-0 left-0 right-0 z-50 border-t grid ${
+          navItems.length > 6 ? 'grid-cols-7' : 'grid-cols-6'
+        } pb-safe px-1 pt-1`}
       >
         {navItems.map((t) => {
           const Icon = t.icon;
@@ -2743,21 +2811,35 @@ export default function App() {
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-3">
-            <button
-              type="button"
-              onClick={() => setShowProductModal(false)}
-              className="px-4 py-2 text-xs font-semibold cursor-pointer text-theme-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer"
-            >
-              {submitting ? 'Saving...' : 'Save Goods'}
-            </button>
+          <div className="flex items-center justify-between gap-2 pt-3">
+            {editingProduct ? (
+              <button
+                type="button"
+                onClick={() => handleDeleteProduct(editingProduct)}
+                className="px-3 py-2 rounded-xl text-xs font-bold text-rose-500 hover:bg-rose-500/10 flex items-center gap-1 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete Item
+              </button>
+            ) : (
+              <div />
+            )}
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowProductModal(false)}
+                className="px-4 py-2 text-xs font-semibold cursor-pointer text-theme-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                {submitting ? 'Saving...' : 'Save Goods'}
+              </button>
+            </div>
           </div>
         </form>
       </Modal>
@@ -2952,97 +3034,358 @@ export default function App() {
         </form>
       </Modal>
 
-      {/* MODAL 5: CHANGE STORE OWNER PIN */}
+      {/* DISCRETIONARY MVP MODAL 5: INSTANT DIGITAL SALE RECEIPT (WHATSAPP & PRINT) */}
       <Modal
-        isOpen={showChangePinModal}
-        onClose={() => setShowChangePinModal(false)}
-        title="Change Store Owner Security PIN"
-        subtitle="Set a secret 4 to 8 digit PIN to protect your store inventory and cashbook online."
+        isOpen={Boolean(lastReceipt)}
+        onClose={() => setLastReceipt(null)}
+        title={`Sale Receipt #${lastReceipt?.receiptNo || ''}`}
+        subtitle={`${lastReceipt?.businessName || ''} • ${lastReceipt?.timestamp || ''}`}
       >
-        <form onSubmit={handleChangeStorePin} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold mb-1 text-theme-primary">
-              Current Store PIN
-            </label>
-            <input
-              type="password"
-              inputMode="numeric"
-              required
-              maxLength={8}
-              value={changePinForm.current_pin}
-              onChange={(e) =>
-                setChangePinForm({
-                  ...changePinForm,
-                  current_pin: e.target.value.replace(/\D/g, ''),
-                })
-              }
-              className="liquid-input w-full rounded-xl px-3 py-2 text-sm tracking-widest font-bold"
-              placeholder="Enter current PIN"
-            />
+        {lastReceipt && (
+          <div className="space-y-4">
+            <div className="liquid-glass-subtle p-4 rounded-2xl space-y-3 border">
+              <div className="flex items-center justify-between text-xs border-b pb-2 theme-divider">
+                <div>
+                  <div className="font-extrabold font-luxury text-sm text-theme-primary">
+                    {lastReceipt.businessName}
+                  </div>
+                  <div className="text-[11px] text-theme-secondary">
+                    {lastReceipt.location} • Served by {lastReceipt.cashierName}
+                  </div>
+                </div>
+                <Badge variant={lastReceipt.balanceDue > 0 ? 'warning' : 'success'}>
+                  {lastReceipt.balanceDue > 0 ? 'PART / CREDIT' : 'PAID IN FULL'}
+                </Badge>
+              </div>
+
+              <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                {lastReceipt.items.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between text-xs tabular-nums"
+                  >
+                    <span className="text-theme-primary font-semibold">
+                      {item.quantity} {item.unit} × {item.name}
+                    </span>
+                    <span className="font-bold text-theme-primary">
+                      {formatNaira(item.lineTotal)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="border-t pt-2.5 theme-divider space-y-1 text-xs tabular-nums">
+                <div className="flex justify-between font-bold text-theme-primary">
+                  <span>Total Customer Bill</span>
+                  <span>{formatNaira(lastReceipt.totalBill)}</span>
+                </div>
+                <div className="flex justify-between text-theme-inflow font-bold">
+                  <span>
+                    Paid ({PAYMENT_CHANNEL_LABELS[lastReceipt.paymentMethod] || lastReceipt.paymentMethod})
+                  </span>
+                  <span>{formatNaira(lastReceipt.amountPaid)}</span>
+                </div>
+                {lastReceipt.balanceDue > 0 && (
+                  <div className="flex justify-between text-theme-outflow font-extrabold">
+                    <span>Balance Owing ({lastReceipt.customerName})</span>
+                    <span>{formatNaira(lastReceipt.balanceDue)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const lines = [
+                    `*${lastReceipt.businessName}*`,
+                    `Receipt: ${lastReceipt.receiptNo}`,
+                    `Date: ${lastReceipt.timestamp}`,
+                    `------------------------`,
+                    ...lastReceipt.items.map(
+                      (i) => `${i.quantity} ${i.unit} x ${i.name} = ${formatNaira(i.lineTotal)}`
+                    ),
+                    `------------------------`,
+                    `*Total Bill:* ${formatNaira(lastReceipt.totalBill)}`,
+                    `*Amount Paid:* ${formatNaira(lastReceipt.amountPaid)} (${lastReceipt.paymentMethod})`,
+                    lastReceipt.balanceDue > 0
+                      ? `*Balance Owing:* ${formatNaira(lastReceipt.balanceDue)}`
+                      : `Status: PAID IN FULL`,
+                    `Thank you for your patronage!`,
+                  ].join('\n');
+                  const cleanPhone = (lastReceipt.customerPhone || '')
+                    .replace(/\D/g, '')
+                    .replace(/^0/, '234');
+                  const url = cleanPhone
+                    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(lines)}`
+                    : `https://wa.me/?text=${encodeURIComponent(lines)}`;
+                  window.open(url, '_blank', 'noopener,noreferrer');
+                }}
+                className="liquid-glass-subtle px-3.5 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 text-theme-inflow cursor-pointer"
+              >
+                <MessageCircle className="w-4 h-4" /> Share on WhatsApp
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="liquid-glass-subtle px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 text-theme-primary cursor-pointer"
+              >
+                <Printer className="w-4 h-4" /> Print Receipt
+              </button>
+              <button
+                type="button"
+                onClick={() => setLastReceipt(null)}
+                className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-extrabold cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* DISCRETIONARY MVP MODAL 6: SMART MARKET RESTOCK BUYING LIST GENERATOR */}
+      <Modal
+        isOpen={showRestockModal}
+        onClose={() => setShowRestockModal(false)}
+        title="Smart Lagos Market Restock List"
+        subtitle={`Auto-calculated market shopping list for ${lowStockRestockPlan.length} low-stock goods`}
+      >
+        <div className="space-y-4">
+          <div className="liquid-glass-header text-white p-4 rounded-2xl flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-sky-200 block">
+                Estimated Market Capital Needed
+              </span>
+              <span className="text-xs text-stone-300">
+                Across {lowStockRestockPlan.length} provision item(s) at reorder threshold
+              </span>
+            </div>
+            <span className="text-xl font-extrabold font-luxury tabular-nums text-white">
+              {formatNaira(totalRestockBudget)}
+            </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold mb-1 text-theme-primary">
-                New PIN (4–8 Digits)
-              </label>
-              <input
-                type="password"
-                inputMode="numeric"
-                required
-                minLength={4}
-                maxLength={8}
-                value={changePinForm.new_pin}
-                onChange={(e) =>
-                  setChangePinForm({
-                    ...changePinForm,
-                    new_pin: e.target.value.replace(/\D/g, ''),
-                  })
-                }
-                className="liquid-input w-full rounded-xl px-3 py-2 text-sm tracking-widest font-bold"
-                placeholder="e.g. 5820"
-              />
+          {lowStockRestockPlan.length === 0 ? (
+            <p className="text-xs text-center py-6 text-theme-secondary">
+              All shelf items are currently above their low-stock warning level!
+            </p>
+          ) : (
+            <div className="max-h-64 overflow-y-auto divide-y theme-divider liquid-glass-subtle rounded-2xl p-3">
+              {lowStockRestockPlan.map((item) => (
+                <div
+                  key={item.id}
+                  className="py-2.5 flex items-center justify-between gap-2 text-xs"
+                >
+                  <div>
+                    <div className="font-extrabold text-theme-primary">{item.name}</div>
+                    <div className="text-[11px] text-theme-secondary">
+                      Shelf: {Number(item.stock_quantity)} {item.unit} • Market:{' '}
+                      {item.supplier_name || 'Oke-Arin / Mushin'}
+                    </div>
+                  </div>
+                  <div className="text-right tabular-nums">
+                    <div className="font-extrabold text-theme-brand">
+                      Buy {item.recommendedQty} {item.unit}
+                    </div>
+                    <div className="text-[11px] text-theme-secondary">
+                      ≈ {formatNaira(item.estimatedCost)}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div>
-              <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Confirm New PIN
-              </label>
-              <input
-                type="password"
-                inputMode="numeric"
-                required
-                minLength={4}
-                maxLength={8}
-                value={changePinForm.confirm_pin}
-                onChange={(e) =>
-                  setChangePinForm({
-                    ...changePinForm,
-                    confirm_pin: e.target.value.replace(/\D/g, ''),
-                  })
-                }
-                className="liquid-input w-full rounded-xl px-3 py-2 text-sm tracking-widest font-bold"
-                placeholder="Repeat new PIN"
-              />
-            </div>
-          </div>
+          )}
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setShowChangePinModal(false)}
-              className="px-4 py-2 text-xs font-semibold cursor-pointer text-theme-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer"
-            >
-              {submitting ? 'Updating...' : 'Save New Store PIN'}
-            </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {lowStockRestockPlan.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = [
+                      `*MARKET RESTOCK LIST — ${currentUser.business_name}*`,
+                      `Date: ${new Date().toLocaleDateString()}`,
+                      `---------------------------`,
+                      ...lowStockRestockPlan.map(
+                        (i) =>
+                          `• ${i.name}: Buy ${i.recommendedQty} ${i.unit} (~${formatNaira(
+                            i.estimatedCost
+                          )}) [${i.supplier_name || 'Market'}]`
+                      ),
+                      `---------------------------`,
+                      `*Estimated Market Budget:* ${formatNaira(totalRestockBudget)}`,
+                    ].join('\n');
+                    navigator.clipboard?.writeText(text);
+                    showSuccessToast('Market buying list copied to clipboard!');
+                  }}
+                  className="liquid-glass-subtle px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5" /> Copy List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = [
+                      `*MARKET RESTOCK LIST — ${currentUser.business_name}*`,
+                      `Date: ${new Date().toLocaleDateString()}`,
+                      `---------------------------`,
+                      ...lowStockRestockPlan.map(
+                        (i) =>
+                          `• ${i.name}: Buy ${i.recommendedQty} ${i.unit} (~${formatNaira(
+                            i.estimatedCost
+                          )})`
+                      ),
+                      `---------------------------`,
+                      `*Estimated Market Budget:* ${formatNaira(totalRestockBudget)}`,
+                    ].join('\n');
+                    window.open(
+                      `https://wa.me/?text=${encodeURIComponent(text)}`,
+                      '_blank',
+                      'noopener,noreferrer'
+                    );
+                  }}
+                  className="liquid-btn-primary px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" /> Send to WhatsApp
+                </button>
+              </>
+            )}
           </div>
-        </form>
+        </div>
+      </Modal>
+
+      {/* DISCRETIONARY MVP MODAL 7: STORE PROFILE & SECURITY SETTINGS */}
+      <Modal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+        title="Store Profile & Account Security"
+        subtitle={`${currentUser.email} • ${currentUser.role} • ${currentUser.auth_provider}`}
+      >
+        <div className="space-y-5">
+          <form onSubmit={handleUpdateProfile} className="space-y-3">
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-theme-secondary">
+              Store Details
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold mb-1 text-theme-primary">
+                  Shop / Business Name
+                </label>
+                <input
+                  required
+                  value={profileForm.business_name}
+                  onChange={(e) =>
+                    setProfileForm({ ...profileForm, business_name: e.target.value })
+                  }
+                  className="liquid-input w-full rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1 text-theme-primary">
+                  Owner Full Name
+                </label>
+                <input
+                  required
+                  value={profileForm.full_name}
+                  onChange={(e) =>
+                    setProfileForm({ ...profileForm, full_name: e.target.value })
+                  }
+                  className="liquid-input w-full rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1 text-theme-primary">
+                  WhatsApp / Phone Number
+                </label>
+                <input
+                  value={profileForm.phone}
+                  onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
+                  className="liquid-input w-full rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1 text-theme-primary">
+                  Market / Area Location
+                </label>
+                <input
+                  value={profileForm.location}
+                  onChange={(e) =>
+                    setProfileForm({ ...profileForm, location: e.target.value })
+                  }
+                  className="liquid-input w-full rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={submitting}
+                className="liquid-btn-primary px-4 py-2 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Save Store Profile
+              </button>
+            </div>
+          </form>
+
+          <form
+            onSubmit={handleChangePassword}
+            className="space-y-3 border-t pt-4 theme-divider"
+          >
+            <h4 className="text-xs font-extrabold uppercase tracking-wider text-theme-secondary">
+              Update Account Password
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold mb-1 text-theme-primary">
+                  Current Password
+                </label>
+                <input
+                  type="password"
+                  value={passwordForm.current_password}
+                  onChange={(e) =>
+                    setPasswordForm({ ...passwordForm, current_password: e.target.value })
+                  }
+                  placeholder="Current password"
+                  className="liquid-input w-full rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1 text-theme-primary">
+                  New Password (Min 6 chars)
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={passwordForm.new_password}
+                  onChange={(e) =>
+                    setPasswordForm({ ...passwordForm, new_password: e.target.value })
+                  }
+                  placeholder="New password"
+                  className="liquid-input w-full rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-500 hover:bg-rose-500/10 flex items-center gap-1.5 cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" /> Sign Out of Device
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="liquid-glass-subtle px-4 py-2 rounded-xl text-xs font-extrabold text-theme-primary cursor-pointer"
+              >
+                Update Password
+              </button>
+            </div>
+          </form>
+        </div>
       </Modal>
     </div>
   );

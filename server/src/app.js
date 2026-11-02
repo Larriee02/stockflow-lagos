@@ -2,14 +2,19 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const env = require('./config/env');
+const db = require('./config/db');
+const AppError = require('./utils/AppError');
+const { verifySession, issueSessionCookie, clearSessionCookie, readToken } = require('./utils/session');
+const userRepo = require('./repositories/user.repository');
+const authService = require('./services/auth.service');
+const adminService = require('./services/admin.service');
 const inventoryService = require('./services/inventory.service');
 const cashbookService = require('./services/cashbook.service');
-const authService = require('./services/auth.service');
-require('dotenv').config();
 
 const app = express();
 
-// Production Security Headers
+// Security headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -17,116 +22,362 @@ app.use((req, res, next) => {
   next();
 });
 
-// Configurable CORS (restricts to ALLOWED_ORIGIN in production if set)
-const allowedOrigin = process.env.ALLOWED_ORIGIN;
+// Configurable CORS
 app.use(
   cors(
-    allowedOrigin
-      ? { origin: allowedOrigin.split(',').map((o) => o.trim()), credentials: true }
-      : undefined
+    env.ALLOWED_ORIGIN
+      ? {
+          origin: env.ALLOWED_ORIGIN.split(',').map((o) => o.trim()),
+          credentials: true,
+        }
+      : { origin: true, credentials: true }
   )
 );
 
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '200kb' }));
 
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
-// Health Check
-app.get('/api/v1/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+const clientIp = (req) =>
+  (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || null;
+
+/* ---------------------------- Authentication Middlewares ---------------------------- */
+
+const requireAuth = asyncHandler(async (req, res, next) => {
+  const token = readToken(req);
+  if (!token) {
+    throw new AppError('Please sign in to continue.', 401, 'UNAUTHENTICATED');
+  }
+  let decoded;
+  try {
+    decoded = await verifySession(token);
+  } catch {
+    throw new AppError('Your session has expired. Please sign in again.', 401, 'SESSION_EXPIRED');
+  }
+
+  const authUser = await userRepo.findAuthById(decoded.userId);
+  if (!authUser || Number(authUser.token_version || 0) !== decoded.tokenVersion) {
+    throw new AppError('Your session is no longer valid. Please sign in again.', 401, 'SESSION_REVOKED');
+  }
+
+  req.user = await userRepo.findPublicById(authUser.id);
+  next();
 });
 
-// Store Owner PIN Authentication Routes
-app.get(
-  '/api/v1/auth/status',
-  asyncHandler(async (req, res) => {
-    const status = await authService.getPinStatus();
-    res.json(status);
-  })
-);
-
-app.post(
-  '/api/v1/auth/verify',
-  asyncHandler(async (req, res) => {
-    const result = await authService.verifyPin(req.body.pin);
-    res.json(result);
-  })
-);
-
-app.post(
-  '/api/v1/auth/change-pin',
-  asyncHandler(async (req, res) => {
-    const result = await authService.changePin(req.body.current_pin, req.body.new_pin);
-    res.json(result);
-  })
-);
-
-// Protect all data-modifying endpoints (POST, PUT, DELETE) with Store Owner PIN verification
-app.use(
-  '/api/v1',
-  asyncHandler(async (req, res, next) => {
-    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
-      return next();
+const requireApprovedUser = [
+  requireAuth,
+  (req, res, next) => {
+    if (req.user.role === 'ADMIN') return next();
+    if (req.user.status === 'PENDING') {
+      return next(
+        new AppError(
+          'Your account is awaiting administrator approval.',
+          403,
+          'ACCOUNT_PENDING'
+        )
+      );
     }
-    if (req.path.startsWith('/auth')) {
-      return next();
+    if (req.user.status === 'SUSPENDED') {
+      return next(
+        new AppError(
+          'Your account has been suspended by an administrator.',
+          403,
+          'ACCOUNT_SUSPENDED'
+        )
+      );
     }
-    const headerPin = req.headers['x-store-pin'];
-    await authService.verifyPin(headerPin);
+    if (req.user.status === 'REJECTED') {
+      return next(
+        new AppError(
+          'Your registration request was declined by an administrator.',
+          403,
+          'ACCOUNT_REJECTED'
+        )
+      );
+    }
     next();
+  },
+];
+
+const requireAdmin = [
+  requireAuth,
+  (req, res, next) => {
+    if (req.user.role !== 'ADMIN' || req.user.status !== 'APPROVED') {
+      return next(new AppError('Administrator privileges required.', 403, 'FORBIDDEN_ADMIN'));
+    }
+    next();
+  },
+];
+
+/* ---------------------------------- Health & Config ---------------------------------- */
+
+app.get(
+  '/api/v1/health',
+  asyncHandler(async (req, res) => {
+    await db.ready();
+    res.json({
+      status: 'ok',
+      dbMode: db.mode,
+      timestamp: new Date().toISOString(),
+    });
   })
 );
 
-// Dashboard Summary
+app.get('/api/v1/auth/config', (req, res) => {
+  res.json(authService.getPublicConfig());
+});
+
+/* ----------------------------------- Auth Endpoints ----------------------------------- */
+
+app.post(
+  '/api/v1/auth/register',
+  asyncHandler(async (req, res) => {
+    const { user, token } = await authService.register(req.body, clientIp(req));
+    await issueSessionCookie(res, { id: user.id, token_version: 0 });
+    res.status(201).json({ user, token });
+  })
+);
+
+app.post(
+  '/api/v1/auth/login',
+  asyncHandler(async (req, res) => {
+    const { user, token } = await authService.login(req.body, clientIp(req));
+    const authUser = await userRepo.findAuthById(user.id);
+    await issueSessionCookie(res, authUser);
+    res.json({ user, token });
+  })
+);
+
+app.post(
+  '/api/v1/auth/oauth',
+  asyncHandler(async (req, res) => {
+    const { user, token, isNewUser } = await authService.oauthSignIn(req.body, clientIp(req));
+    const authUser = await userRepo.findAuthById(user.id);
+    await issueSessionCookie(res, authUser);
+    res.status(isNewUser ? 201 : 200).json({ user, token, isNewUser });
+  })
+);
+
+app.post('/api/v1/auth/logout', (req, res) => {
+  clearSessionCookie(res);
+  res.json({ loggedOut: true });
+});
+
+app.get('/api/v1/auth/me', requireAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.put(
+  '/api/v1/auth/profile',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = await authService.updateProfile(req.user.id, req.body);
+    res.json({ user });
+  })
+);
+
+app.post(
+  '/api/v1/auth/change-password',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = await authService.changePassword(req.user.id, req.body, clientIp(req));
+    res.json({ user });
+  })
+);
+
+/* ------------------------------ Admin Control Endpoints ------------------------------ */
+
+app.get(
+  '/api/v1/admin/overview',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const overview = await adminService.getOverview();
+    res.json(overview);
+  })
+);
+
+app.get(
+  '/api/v1/admin/users',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const data = await adminService.listUsers(req.query);
+    res.json(data);
+  })
+);
+
+app.get(
+  '/api/v1/admin/users/export',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const users = await adminService.exportUsers();
+    res.json({ users });
+  })
+);
+
+app.get(
+  '/api/v1/admin/users/:id',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const detail = await adminService.getUserDetail(req.params.id);
+    res.json(detail);
+  })
+);
+
+app.patch(
+  '/api/v1/admin/users/:id/status',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const updated = await adminService.updateUserStatus(
+      req.user.id,
+      req.params.id,
+      req.body,
+      clientIp(req)
+    );
+    res.json({ user: updated });
+  })
+);
+
+app.post(
+  '/api/v1/admin/users/bulk-status',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const result = await adminService.bulkUpdateStatus(req.user.id, req.body, clientIp(req));
+    res.json(result);
+  })
+);
+
+app.patch(
+  '/api/v1/admin/users/:id/role',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const updated = await adminService.updateUserRole(
+      req.user.id,
+      req.params.id,
+      req.body,
+      clientIp(req)
+    );
+    res.json({ user: updated });
+  })
+);
+
+app.patch(
+  '/api/v1/admin/users/:id/note',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const updated = await adminService.updateAdminNote(
+      req.user.id,
+      req.params.id,
+      req.body,
+      clientIp(req)
+    );
+    res.json({ user: updated });
+  })
+);
+
+app.post(
+  '/api/v1/admin/users/:id/reset-password',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const result = await adminService.resetUserPassword(
+      req.user.id,
+      req.params.id,
+      req.body,
+      clientIp(req)
+    );
+    res.json(result);
+  })
+);
+
+app.delete(
+  '/api/v1/admin/users/:id',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const result = await adminService.deleteUser(req.user.id, req.params.id, clientIp(req));
+    res.json(result);
+  })
+);
+
+app.get(
+  '/api/v1/admin/audit-logs',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const data = await adminService.getAuditLogs(req.query);
+    res.json(data);
+  })
+);
+
+/* ------------------------- Multi-Tenant Store Endpoints ------------------------- */
+
 app.get(
   '/api/v1/dashboard',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const summary = await cashbookService.getDashboardSummary();
+    const summary = await cashbookService.getDashboardSummary(req.user.id);
     res.json(summary);
   })
 );
 
-// Products CRUD
 app.get(
   '/api/v1/products',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const products = await inventoryService.getProducts(req.query);
+    const products = await inventoryService.getProducts(req.user.id, req.query);
     res.json(products);
   })
 );
 
 app.post(
   '/api/v1/products',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const product = await inventoryService.createProduct(req.body);
+    const product = await inventoryService.createProduct(req.user.id, req.body);
     res.status(201).json(product);
+  })
+);
+
+app.post(
+  '/api/v1/products/seed-starter',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const products = await inventoryService.seedStarterProducts(req.user.id);
+    res.status(201).json(products);
   })
 );
 
 app.put(
   '/api/v1/products/:id',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const product = await inventoryService.updateProduct(req.params.id, req.body);
+    const product = await inventoryService.updateProduct(req.user.id, req.params.id, req.body);
     res.json(product);
   })
 );
 
-// Fast Multi-Item Shop Counter Checkout
+app.delete(
+  '/api/v1/products/:id',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const result = await inventoryService.deleteProduct(req.user.id, req.params.id);
+    res.json(result);
+  })
+);
+
 app.post(
   '/api/v1/sales/checkout',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const result = await inventoryService.checkoutCart(req.body);
+    const result = await inventoryService.checkoutCart(req.user.id, req.body);
     res.status(201).json(result);
   })
 );
 
-// Single Item Stock Movement (Market Restock, Shelf Count, Damaged Goods)
 app.post(
   '/api/v1/inventory/movements',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
     const idempotencyKey = req.headers['idempotency-key'] || req.body.idempotency_key;
-    const result = await inventoryService.recordMovement({
+    const result = await inventoryService.recordMovement(req.user.id, {
       ...req.body,
       idempotency_key: idempotencyKey,
     });
@@ -136,58 +387,63 @@ app.post(
 
 app.get(
   '/api/v1/inventory/movements',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const movements = await inventoryService.getRecentMovements(req.query.limit);
+    const movements = await inventoryService.getRecentMovements(req.user.id, req.query.limit);
     res.json(movements);
   })
 );
 
-// Cashbook Inflow & Outflow Ledger
 app.get(
   '/api/v1/transactions',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const transactions = await cashbookService.getTransactions(req.query);
+    const transactions = await cashbookService.getTransactions(req.user.id, req.query);
     res.json(transactions);
   })
 );
 
 app.post(
   '/api/v1/transactions',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const tx = await cashbookService.recordTransaction(req.body);
+    const tx = await cashbookService.recordTransaction(req.user.id, req.body);
     res.status(201).json(tx);
   })
 );
 
 app.delete(
   '/api/v1/transactions/:id',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const result = await cashbookService.deleteTransaction(req.params.id);
+    const result = await cashbookService.deleteTransaction(req.user.id, req.params.id);
     res.json(result);
   })
 );
 
-// Credit / Debtors Book Routes ("Who Owes Me")
 app.get(
   '/api/v1/credits',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const credits = await cashbookService.getCredits(req.query);
+    const credits = await cashbookService.getCredits(req.user.id, req.query);
     res.json(credits);
   })
 );
 
 app.post(
   '/api/v1/credits',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const credit = await cashbookService.createCredit(req.body);
+    const credit = await cashbookService.createCredit(req.user.id, req.body);
     res.status(201).json(credit);
   })
 );
 
 app.post(
   '/api/v1/credits/:id/repay',
+  requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const result = await cashbookService.repayCredit(req.params.id, req.body);
+    const result = await cashbookService.repayCredit(req.user.id, req.params.id, req.body);
     res.json(result);
   })
 );
@@ -210,7 +466,7 @@ app.use((err, req, res, next) => {
   console.error('[API Error]:', err.message);
   if (err.code === '23505') {
     return res.status(409).json({
-      error: 'A product with this code already exists.',
+      error: 'A record with this code or email already exists.',
       code: 'DUPLICATE_RECORD',
     });
   }
@@ -221,10 +477,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = env.PORT || 5000;
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`StockFlow Lagos API v1 running on http://localhost:${PORT}`);
+    console.log(`StockFlow Lagos SaaS API v1 running on http://localhost:${PORT}`);
   });
 }
 

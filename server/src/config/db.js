@@ -1,118 +1,9 @@
-const { Pool } = require('pg');
-const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
+const env = require('./env');
+const migrations = require('../db/migrations');
+const { seedStarterCatalog } = require('../db/starterCatalog');
 const serverlessStore = require('./serverlessStore');
-require('dotenv').config();
-
-const FALLBACK_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS products (
-    id SERIAL PRIMARY KEY,
-    sku VARCHAR(50) UNIQUE NOT NULL,
-    name VARCHAR(150) NOT NULL,
-    category VARCHAR(80) NOT NULL DEFAULT 'Provisions',
-    unit VARCHAR(40) NOT NULL DEFAULT 'Pack',
-    cost_price NUMERIC(14, 2) NOT NULL CHECK (cost_price >= 0),
-    selling_price NUMERIC(14, 2) NOT NULL CHECK (selling_price >= 0),
-    stock_quantity NUMERIC(14, 2) NOT NULL DEFAULT 0 CHECK (stock_quantity >= 0),
-    reorder_level NUMERIC(14, 2) NOT NULL DEFAULT 5 CHECK (reorder_level >= 0),
-    supplier_name VARCHAR(120),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS stock_movements (
-    id SERIAL PRIMARY KEY,
-    idempotency_key VARCHAR(64) UNIQUE,
-    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-    movement_type VARCHAR(20) NOT NULL CHECK (movement_type IN ('SALE', 'RESTOCK', 'ADJUSTMENT', 'DAMAGE')),
-    quantity_change NUMERIC(14, 2) NOT NULL,
-    previous_stock NUMERIC(14, 2) NOT NULL,
-    new_stock NUMERIC(14, 2) NOT NULL CHECK (new_stock >= 0),
-    unit_price NUMERIC(14, 2) NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
-    total_value NUMERIC(14, 2) NOT NULL DEFAULT 0 CHECK (total_value >= 0),
-    counterparty_name VARCHAR(120),
-    note TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS cash_transactions (
-    id SERIAL PRIMARY KEY,
-    idempotency_key VARCHAR(64) UNIQUE,
-    type VARCHAR(15) NOT NULL CHECK (type IN ('INFLOW', 'OUTFLOW')),
-    category VARCHAR(80) NOT NULL,
-    amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
-    payment_method VARCHAR(30) NOT NULL DEFAULT 'CASH'
-        CHECK (payment_method IN ('CASH', 'POS', 'BANK_TRANSFER', 'MOBILE_MONEY')),
-    counterparty_name VARCHAR(120),
-    description TEXT NOT NULL,
-    stock_movement_id INTEGER REFERENCES stock_movements(id) ON DELETE SET NULL,
-    transaction_date TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS credit_records (
-    id SERIAL PRIMARY KEY,
-    customer_name VARCHAR(120) NOT NULL,
-    phone VARCHAR(40),
-    items_summary TEXT NOT NULL,
-    total_amount NUMERIC(14, 2) NOT NULL CHECK (total_amount > 0),
-    amount_paid NUMERIC(14, 2) NOT NULL DEFAULT 0 CHECK (amount_paid >= 0),
-    balance_due NUMERIC(14, 2) NOT NULL CHECK (balance_due >= 0),
-    status VARCHAR(20) NOT NULL DEFAULT 'OWING' CHECK (status IN ('OWING', 'PAID')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT INTO products (sku, name, category, unit, cost_price, selling_price, stock_quantity, reorder_level, supplier_name)
-VALUES
-    ('PRV-001', 'Peak Milk Powder Sachet (Roll x12)', 'Milk & Drinks', 'Roll', 2600.00, 3000.00, 0, 8, 'Oke-Arin Wholesale'),
-    ('PRV-002', 'Milo Activ-Go Sachet (Roll x10)', 'Milk & Drinks', 'Roll', 2100.00, 2500.00, 0, 8, 'Oke-Arin Wholesale'),
-    ('NDL-003', 'Indomie Super Pack 120g (Carton x40)', 'Noodles & Pasta', 'Carton', 14200.00, 16000.00, 0, 6, 'Mushin Market Depot'),
-    ('NDL-004', 'Indomie Super Pack 120g (Single)', 'Noodles & Pasta', 'Piece', 355.00, 450.00, 0, 20, 'Mushin Market Depot'),
-    ('GRN-005', 'Golden Penny Semovita 2kg', 'Swallow & Grains', 'Bag', 2850.00, 3300.00, 0, 10, 'Trade Fair Wholesaler'),
-    ('GRN-006', 'Dangote Granulated Sugar 500g', 'Provisions', 'Pack', 1150.00, 1400.00, 0, 10, 'Oke-Arin Wholesale'),
-    ('OIL-007', 'Devon Kings Cooking Oil 1L Pouch', 'Cooking Oil', 'Pouch', 2400.00, 2800.00, 0, 6, 'Trade Fair Wholesaler'),
-    ('CND-008', 'Titus Sardine in Oil 125g', 'Canned Food', 'Tin', 1150.00, 1400.00, 0, 12, 'Oke-Arin Wholesale'),
-    ('SNK-009', 'Golden Morn Maize Cereal 900g', 'Cereals & Snacks', 'Pack', 3600.00, 4200.00, 0, 5, 'Mushin Market Depot'),
-    ('HHS-010', 'Sunlight Detergent Powder 900g', 'Soap & Household', 'Pack', 1650.00, 2000.00, 0, 8, 'Trade Fair Wholesaler'),
-    ('DRK-011', 'Eva Table Water 75cl (Pack x12)', 'Milk & Drinks', 'Pack', 2400.00, 3000.00, 0, 6, 'Local Beverage Truck'),
-    ('BRD-012', 'Agege / Sliced Family Loaf Bread', 'Bread & Bakery', 'Loaf', 1200.00, 1500.00, 0, 5, 'Morning Bakery Supplier')
-ON CONFLICT (sku) DO NOTHING;
-`;
-
-function loadSchemaSql() {
-  try {
-    const schemaPath = path.join(__dirname, '../../../database/schema.sql');
-    if (fs.existsSync(schemaPath)) {
-      return fs.readFileSync(schemaPath, 'utf8');
-    }
-  } catch {
-    // Fallback for serverless bundles
-  }
-  return FALLBACK_SCHEMA_SQL;
-}
-
-async function applyZeroResetOnce(queryExecutor) {
-  await queryExecutor(`
-    CREATE TABLE IF NOT EXISTS store_settings (
-      key VARCHAR(64) PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-  const checkReset = await queryExecutor(
-    `SELECT value FROM store_settings WHERE key = 'zero_reset_v2' LIMIT 1;`
-  );
-  if (!checkReset.rows || checkReset.rows.length === 0) {
-    await queryExecutor(`DELETE FROM cash_transactions;`);
-    await queryExecutor(`DELETE FROM stock_movements;`);
-    await queryExecutor(`DELETE FROM credit_records;`);
-    await queryExecutor(`UPDATE products SET stock_quantity = 0;`);
-    await queryExecutor(
-      `INSERT INTO store_settings (key, value) VALUES ('zero_reset_v2', 'done') ON CONFLICT (key) DO UPDATE SET value = 'done';`
-    );
-    console.log('[DB] Applied zero_reset_v2: All stock and financial records set to 0.');
-  }
-}
 
 function sanitizeDatabaseUrl(raw) {
   if (!raw || typeof raw !== 'string') return null;
@@ -121,160 +12,230 @@ function sanitizeDatabaseUrl(raw) {
     .replace(/^['"]+|['"]+$/g, '')
     .replace(/^DATABASE_URL=/i, '')
     .trim();
-
   cleaned = cleaned.replace(/:\[([^\]]+)\]@/, ':$1@');
-
-  const match = cleaned.match(/^(postgres(?:ql)?:\/\/[^:]+:)([^@]+)(@.+)$/i);
+  const match = cleaned.match(/^(postgres(?:ql)?:\/\/[^:/]+:)(.+)(@[^@]+)$/i);
   if (match) {
     const [, prefix, rawPass, suffix] = match;
+    let decoded = rawPass;
     try {
-      const decodedPass = decodeURIComponent(rawPass);
-      cleaned = `${prefix}${encodeURIComponent(decodedPass)}${suffix}`;
+      decoded = decodeURIComponent(rawPass);
     } catch {
-      cleaned = `${prefix}${encodeURIComponent(rawPass)}${suffix}`;
+      // keep raw
     }
+    cleaned = `${prefix}${encodeURIComponent(decoded)}${suffix}`;
   }
-
   try {
+    // eslint-disable-next-line no-new
     new URL(cleaned);
     return cleaned;
-  } catch (err) {
-    console.warn('[DB] Invalid DATABASE_URL format, falling back to built-in store:', err.message);
+  } catch {
     return null;
   }
 }
 
-let poolInstance = null;
-let pgliteInstance = null;
-let initPromise = null;
+const connectionString = sanitizeDatabaseUrl(env.DATABASE_URL);
+const hasValidPgUrl = Boolean(connectionString) && !connectionString.includes('YOUR-PASSWORD');
 
-const cleanDbUrl = sanitizeDatabaseUrl(process.env.DATABASE_URL);
-if (cleanDbUrl && !cleanDbUrl.includes('YOUR-PASSWORD')) {
-  try {
-    const isLocalHost =
-      cleanDbUrl.includes('localhost') || cleanDbUrl.includes('127.0.0.1');
+let mode = 'embedded';
+if (hasValidPgUrl) mode = 'postgres';
+else if (process.env.VERCEL) mode = 'serverless';
 
-    poolInstance = new Pool({
-      connectionString: cleanDbUrl,
-      ssl: isLocalHost ? false : { rejectUnauthorized: false },
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 8000,
-      statement_timeout: 8000,
-    });
-    console.log('[DB] Using external PostgreSQL server via DATABASE_URL');
-  } catch (err) {
-    console.warn('[DB] Could not initialize pg Pool, using fallback store:', err.message);
-    poolInstance = null;
-  }
+let pool = null;
+let pglite = null;
+let pglitePromise = null;
+
+if (mode === 'postgres') {
+  const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
+  pool = new Pool({
+    connectionString,
+    ssl: isLocal ? false : { rejectUnauthorized: false },
+    max: env.IS_PROD ? 3 : 10,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 8000,
+  });
+  pool.on('error', (err) => console.error('[DB] Idle client error:', err.message));
 }
 
-let cloudSchemaReady = false;
-let cloudInitPromise = null;
-
-async function ensureCloudSchema() {
-  if (!poolInstance || cloudSchemaReady) return;
-  if (cloudInitPromise) return cloudInitPromise;
-
-  cloudInitPromise = (async () => {
-    try {
-      const check = await poolInstance.query(`
-        SELECT EXISTS (
-          SELECT FROM information_schema.tables 
-          WHERE table_schema = 'public' AND table_name = 'credit_records'
-        ) AS initialized;
-      `);
-      if (!check.rows[0]?.initialized) {
-        await poolInstance.query(loadSchemaSql());
-        console.log('[DB] Auto-initialized Cloud PostgreSQL schema.');
-      }
-      await applyZeroResetOnce((sql, params) => poolInstance.query(sql, params));
-      cloudSchemaReady = true;
-    } catch (err) {
-      console.error('[DB] Cloud schema check error:', err.message);
-      cloudInitPromise = null;
-      throw err;
-    }
-  })();
-
-  return cloudInitPromise;
-}
-
-async function getLocalEngine() {
-  if (process.env.VERCEL) {
-    return serverlessStore;
-  }
-
-  if (pgliteInstance) return pgliteInstance;
-  if (initPromise) return initPromise;
-
-  initPromise = (async () => {
-    try {
+async function getPglite() {
+  if (pglite) return pglite;
+  if (!pglitePromise) {
+    pglitePromise = (async () => {
       const { PGlite } = require('@electric-sql/pglite');
-      const dataDir = path.join(__dirname, '../../pgdata');
-      const db = new PGlite(dataDir);
+      const db = new PGlite(path.join(__dirname, '../../pgdata'));
       await db.waitReady;
-
-      const check = await db.query(`
-        SELECT EXISTS (
-          SELECT FROM information_schema.tables 
-          WHERE table_schema = 'public' AND table_name = 'credit_records'
-        ) AS initialized;
-      `);
-
-      if (!check.rows[0]?.initialized) {
-        await db.exec(loadSchemaSql());
-        console.log('[DB] Initialized Lagos Provision Store schema.');
-      }
-
-      await applyZeroResetOnce((sql, params) => db.query(sql, params));
-
-      pgliteInstance = db;
+      pglite = db;
       return db;
-    } catch (err) {
-      console.warn('[DB] PGlite unavailable, using built-in store:', err.message);
-      pgliteInstance = serverlessStore;
-      return serverlessStore;
-    }
-  })();
-
-  return initPromise;
+    })();
+  }
+  return pglitePromise;
 }
 
-const dbAdapter = {
-  async query(text, params = []) {
-    if (poolInstance) {
-      try {
-        await ensureCloudSchema();
-        return await poolInstance.query(text, params);
-      } catch (err) {
-        console.warn('[DB] Cloud query fallback to serverlessStore:', err.message);
-        return serverlessStore.query(text, params);
-      }
-    }
-    const db = await getLocalEngine();
-    return db.query(text, params);
-  },
+async function rawQuery(text, params = []) {
+  if (mode === 'serverless') return serverlessStore.query(text, params);
+  if (mode === 'postgres') return pool.query(text, params);
+  const db = await getPglite();
+  return db.query(text, params);
+}
 
-  async connect() {
-    if (poolInstance) {
+async function rawTransaction(fn) {
+  if (mode === 'serverless') return serverlessStore.withTransaction(fn);
+  if (mode === 'postgres') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn({ query: (t, p = []) => client.query(t, p) });
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
       try {
-        await ensureCloudSchema();
-        return await poolInstance.connect();
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+  const db = await getPglite();
+  return db.transaction((tx) => fn({ query: (t, p = []) => tx.query(t, p) }));
+}
+
+async function runMigrations() {
+  if (mode === 'serverless') return;
+
+  const runAll = async (q, exec) => {
+    await q(`CREATE TABLE IF NOT EXISTS schema_migrations (
+      id VARCHAR(120) PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+    const { rows } = await q('SELECT id FROM schema_migrations');
+    const applied = new Set(rows.map((r) => r.id));
+    for (const migration of migrations) {
+      if (applied.has(migration.id)) continue;
+      await exec(
+        `BEGIN;\n${migration.sql}\nINSERT INTO schema_migrations (id) VALUES ('${migration.id}');\nCOMMIT;`
+      );
+      console.log(`[DB] Applied migration ${migration.id}`);
+    }
+  };
+
+  if (mode === 'postgres') {
+    const client = await pool.connect();
+    try {
+      await client.query('SELECT pg_advisory_lock(727274001)');
+      await runAll(
+        (t, p) => client.query(t, p),
+        async (sql) => {
+          try {
+            await client.query(sql);
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+          }
+        }
+      );
+    } finally {
+      await client.query('SELECT pg_advisory_unlock(727274001)').catch(() => {});
+      client.release();
+    }
+    return;
+  }
+
+  const db = await getPglite();
+  await runAll(
+    (t, p) => db.query(t, p),
+    async (sql) => {
+      try {
+        await db.exec(sql);
       } catch (err) {
-        console.warn('[DB] Cloud connect fallback to serverlessStore:', err.message);
-        return serverlessStore.connect();
+        await db.exec('ROLLBACK').catch(() => {});
+        throw err;
       }
     }
-    const db = await getLocalEngine();
-    if (typeof db.connect === 'function') {
-      return db.connect();
+  );
+}
+
+async function bootstrapAdmin() {
+  if (mode === 'serverless') return;
+
+  const bcrypt = require('bcryptjs');
+  let bootstrappedAdminId = null;
+  if (env.ADMIN_EMAIL && env.ADMIN_PASSWORD) {
+    const existing = await rawQuery('SELECT id, role FROM users WHERE LOWER(email) = $1', [
+      env.ADMIN_EMAIL,
+    ]);
+    if (existing.rows.length === 0) {
+      const hash = await bcrypt.hash(env.ADMIN_PASSWORD, 10);
+      const inserted = await rawQuery(
+        `INSERT INTO users (email, password_hash, full_name, business_name, phone, business_type, city, role, status, approved_at)
+         VALUES ($1, $2, $3, 'StockFlow Lagos HQ', '08030000000', 'Provision Store', 'Lagos', 'ADMIN', 'APPROVED', NOW())
+         RETURNING id`,
+        [env.ADMIN_EMAIL, hash, env.ADMIN_NAME]
+      );
+      bootstrappedAdminId = inserted.rows[0].id;
+      console.log(`[DB] Bootstrapped admin account ${env.ADMIN_EMAIL}`);
+    } else if (existing.rows[0].role !== 'ADMIN') {
+      await rawQuery(
+        `UPDATE users SET role = 'ADMIN', status = 'APPROVED', updated_at = NOW() WHERE id = $1`,
+        [existing.rows[0].id]
+      );
+      bootstrappedAdminId = existing.rows[0].id;
+    } else {
+      bootstrappedAdminId = existing.rows[0].id;
     }
-    return {
-      query: (text, params = []) => db.query(text, params),
-      release: () => {},
-    };
+  }
+
+  const admin = await rawQuery(
+    `SELECT id FROM users WHERE role = 'ADMIN' ORDER BY id ASC LIMIT 1`
+  );
+  if (admin.rows.length) {
+    const adminId = admin.rows[0].id;
+    await rawQuery(
+      `DELETE FROM products
+       WHERE user_id IS NULL
+         AND sku IN (SELECT sku FROM products WHERE user_id = $1)`,
+      [adminId]
+    );
+    for (const table of ['products', 'stock_movements', 'cash_transactions', 'credit_records']) {
+      await rawQuery(`UPDATE ${table} SET user_id = $1 WHERE user_id IS NULL`, [adminId]);
+    }
+    if (bootstrappedAdminId) {
+      await seedStarterCatalog({ query: rawQuery }, adminId);
+    }
+  }
+}
+
+let readyPromise = null;
+function ready() {
+  if (mode === 'serverless') return Promise.resolve();
+  if (!readyPromise) {
+    readyPromise = (async () => {
+      try {
+        await runMigrations();
+        await bootstrapAdmin();
+      } catch (err) {
+        console.warn('[DB] Primary DB initialization failed, falling back to serverlessStore:', err.message);
+        mode = 'serverless';
+      }
+    })();
+  }
+  return readyPromise;
+}
+
+const db = {
+  get mode() {
+    return mode;
+  },
+  ready,
+  async query(text, params = []) {
+    await ready();
+    return rawQuery(text, params);
+  },
+  async withTransaction(fn) {
+    await ready();
+    return rawTransaction(fn);
   },
 };
 
-module.exports = dbAdapter;
+module.exports = db;
