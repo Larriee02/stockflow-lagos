@@ -40,6 +40,27 @@ const env = {
   APPLE_CLIENT_ID: (process.env.APPLE_CLIENT_ID || '').trim(),
   APPLE_REDIRECT_URI: (process.env.APPLE_REDIRECT_URI || '').trim(),
 
+  // Email Notification Config (Resend, SendGrid, or SMTP)
+  RESEND_API_KEY: (process.env.RESEND_API_KEY || '').trim(),
+  SENDGRID_API_KEY: (process.env.SENDGRID_API_KEY || '').trim(),
+  EMAIL_FROM: process.env.EMAIL_FROM || 'StockFlow <notifications@stockflowlagos.com>',
+  SMTP_HOST: (process.env.SMTP_HOST || '').trim(),
+  SMTP_PORT: Number(process.env.SMTP_PORT) || 587,
+  SMTP_USER: (process.env.SMTP_USER || '').trim(),
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  SMTP_SECURE: bool(process.env.SMTP_SECURE, false),
+
+  // SMS Notification Config (Twilio, Termii, or Webhook)
+  TWILIO_ACCOUNT_SID: (process.env.TWILIO_ACCOUNT_SID || '').trim(),
+  TWILIO_AUTH_TOKEN: (process.env.TWILIO_AUTH_TOKEN || '').trim(),
+  TWILIO_PHONE_NUMBER: (process.env.TWILIO_PHONE_NUMBER || '').trim(),
+  TERMII_API_KEY: (process.env.TERMII_API_KEY || '').trim(),
+  TERMII_SENDER_ID: (process.env.TERMII_SENDER_ID || 'StockFlow').trim(),
+  SMS_WEBHOOK_URL: (process.env.SMS_WEBHOOK_URL || '').trim(),
+
+  // Allow preview of OTP in response for development / live testing without requiring external credentials
+  ALLOW_OTP_PREVIEW: bool(process.env.ALLOW_OTP_PREVIEW, true),
+
   SUPPORT_WHATSAPP: (process.env.SUPPORT_WHATSAPP || '2348000000000').replace(/[^\d]/g, ''),
   ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN || '',
 };

@@ -131,6 +131,28 @@ app.get('/api/v1/auth/config', (req, res) => {
 /* ----------------------------------- Auth Endpoints ----------------------------------- */
 
 app.post(
+  '/api/v1/auth/otp/request',
+  asyncHandler(async (req, res) => {
+    const { purpose } = req.body;
+    if (String(purpose).toUpperCase() === 'SIGNUP') {
+      const result = await authService.requestSignupOtp(req.body);
+      return res.json(result);
+    }
+    const result = await authService.requestLoginOtp(req.body);
+    res.json(result);
+  })
+);
+
+app.post(
+  '/api/v1/auth/otp/verify',
+  asyncHandler(async (req, res) => {
+    const otpService = require('./services/otp.service');
+    const result = await otpService.verifyOtp(req.body);
+    res.json(result);
+  })
+);
+
+app.post(
   '/api/v1/auth/register',
   asyncHandler(async (req, res) => {
     const { user, token } = await authService.register(req.body, clientIp(req));
@@ -142,10 +164,13 @@ app.post(
 app.post(
   '/api/v1/auth/login',
   asyncHandler(async (req, res) => {
-    const { user, token } = await authService.login(req.body, clientIp(req));
-    const authUser = await userRepo.findAuthById(user.id);
+    const result = await authService.login(req.body, clientIp(req));
+    if (result.otpRequired) {
+      return res.json(result);
+    }
+    const authUser = await userRepo.findAuthById(result.user.id);
     await issueSessionCookie(res, authUser);
-    res.json({ user, token });
+    res.json({ user: result.user, token: result.token });
   })
 );
 

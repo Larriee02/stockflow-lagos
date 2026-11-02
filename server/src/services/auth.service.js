@@ -7,6 +7,7 @@ const userRepo = require('../repositories/user.repository');
 const auditRepo = require('../repositories/audit.repository');
 const { verifyGoogleIdToken, verifyAppleIdToken } = require('./oauth.service');
 const { seedStarterCatalog } = require('../db/starterCatalog');
+const otpService = require('./otp.service');
 
 const MAX_FAILED_ATTEMPTS = 6;
 const LOCK_MINUTES = 15;
@@ -19,7 +20,73 @@ class AuthService {
       appleRedirectUri: env.APPLE_REDIRECT_URI || null,
       autoApproveUsers: env.AUTO_APPROVE_USERS,
       supportWhatsapp: env.SUPPORT_WHATSAPP || null,
+      otpNotificationEnabled: true,
+      allowOtpPreview: env.ALLOW_OTP_PREVIEW,
     };
+  }
+
+  /**
+   * Request OTP for Signup
+   */
+  async requestSignupOtp(payload) {
+    const email = String(payload.email || '').trim().toLowerCase();
+    const fullName = String(payload.full_name || '').trim();
+    const businessName = String(payload.business_name || '').trim();
+    const phone = String(payload.phone || '').trim() || null;
+    const channel = String(payload.channel || (phone ? 'BOTH' : 'EMAIL')).toUpperCase();
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new AppError('Please enter a valid email address.', 400, 'INVALID_EMAIL');
+    }
+    if (!fullName || fullName.length < 2) {
+      throw new AppError('Please enter your full name.', 400, 'INVALID_NAME');
+    }
+    if (!businessName || businessName.length < 2) {
+      throw new AppError('Please enter your shop or business name.', 400, 'INVALID_BUSINESS');
+    }
+
+    const existing = await userRepo.findAuthByEmail(email);
+    if (existing) {
+      throw new AppError(
+        'An account with this email already exists. Please sign in instead.',
+        409,
+        'EMAIL_TAKEN'
+      );
+    }
+
+    return otpService.requestOtp({
+      purpose: 'SIGNUP',
+      email,
+      phone,
+      channel: ['EMAIL', 'SMS', 'BOTH'].includes(channel) ? channel : 'EMAIL',
+      recipientName: fullName,
+    });
+  }
+
+  /**
+   * Request/Resend OTP for Login
+   */
+  async requestLoginOtp(payload) {
+    const email = String(payload.email || '').trim().toLowerCase();
+    if (!email) {
+      throw new AppError('Please enter your email address.', 400, 'INVALID_EMAIL');
+    }
+
+    const user = await userRepo.findAuthByEmail(email);
+    if (!user) {
+      throw new AppError('Account not found with this email.', 404, 'USER_NOT_FOUND');
+    }
+
+    const channel = String(payload.channel || (user.phone ? 'BOTH' : 'EMAIL')).toUpperCase();
+
+    return otpService.requestOtp({
+      purpose: 'LOGIN',
+      email: user.email,
+      phone: user.phone,
+      channel: ['EMAIL', 'SMS', 'BOTH'].includes(channel) ? channel : 'EMAIL',
+      recipientName: user.full_name,
+      payload: { userId: user.id },
+    });
   }
 
   async register(payload, ip = null) {
@@ -31,6 +98,7 @@ class AuthService {
     const businessType = String(payload.business_type || 'Provision Store').trim();
     const city = String(payload.city || 'Lagos').trim();
     const seedCatalog = payload.seed_catalog !== false;
+    const otp = payload.otp ? String(payload.otp).trim() : null;
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new AppError('Please enter a valid email address.', 400, 'INVALID_EMAIL');
@@ -52,6 +120,16 @@ class AuthService {
         409,
         'EMAIL_TAKEN'
       );
+    }
+
+    // Verify OTP if provided (or verify signup request challenge)
+    if (otp) {
+      await otpService.verifyOtp({
+        purpose: 'SIGNUP',
+        email,
+        phone,
+        code: otp,
+      });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -110,6 +188,7 @@ class AuthService {
   async login(payload, ip = null) {
     const email = String(payload.email || '').trim().toLowerCase();
     const password = String(payload.password || '');
+    const otp = payload.otp ? String(payload.otp).trim() : null;
 
     if (!email || !password) {
       throw new AppError('Please enter both your email and password.', 400, 'MISSING_CREDENTIALS');
@@ -144,12 +223,44 @@ class AuthService {
       throw new AppError('Invalid email or password.', 401, 'INVALID_CREDENTIALS');
     }
 
+    // Two-factor OTP step: if OTP was not supplied, issue an OTP challenge via Email and/or SMS
+    if (!otp) {
+      const defaultChannel = payload.channel || (user.phone ? 'BOTH' : 'EMAIL');
+      const otpRes = await otpService.requestOtp({
+        purpose: 'LOGIN',
+        email: user.email,
+        phone: user.phone,
+        channel: defaultChannel,
+        recipientName: user.full_name,
+        payload: { userId: user.id },
+      });
+
+      return {
+        otpRequired: true,
+        email: user.email,
+        phone: user.phone,
+        maskedDestination: otpRes.maskedDestination,
+        channel: otpRes.channel,
+        message: otpRes.message,
+        expiresInSeconds: otpRes.expiresInSeconds,
+        otpPreview: otpRes.otpPreview,
+      };
+    }
+
+    // Verify submitted OTP
+    await otpService.verifyOtp({
+      purpose: 'LOGIN',
+      email: user.email,
+      phone: user.phone,
+      code: otp,
+    });
+
     await userRepo.recordLoginSuccess(user.id);
     await auditRepo.log({
       actorUserId: user.id,
       action: 'USER_LOGIN',
       targetUserId: user.id,
-      details: { provider: 'EMAIL' },
+      details: { provider: 'EMAIL', otp_verified: true },
       ip,
     });
 
