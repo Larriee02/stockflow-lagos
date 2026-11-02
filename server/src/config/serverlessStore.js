@@ -5,76 +5,15 @@ const bcrypt = require('bcryptjs');
 const env = require('./env');
 const { STARTER_CATALOG } = require('../db/starterCatalog');
 
-const STORE_FILE = path.join(os.tmpdir(), 'stockflow-lagos-saas-v3.json');
+const STORE_FILE = path.join(os.tmpdir(), 'stockflow-live-production-v5.json');
 
 let memoryState = null;
 
 function buildInitialState() {
-  const adminEmail = env.ADMIN_EMAIL || 'admin@stockflowlagos.com';
-  const adminPassword = env.ADMIN_PASSWORD || 'Admin@2026';
-  const adminHash = bcrypt.hashSync(adminPassword, 10);
-  const now = new Date().toISOString();
-
-  const adminUser = {
-    id: 1,
-    email: adminEmail,
-    password_hash: adminHash,
-    full_name: env.ADMIN_NAME || 'StockFlow Super Admin',
-    business_name: 'StockFlow Lagos HQ',
-    phone: '08030000000',
-    business_type: 'Wholesale & Retail Provision Store',
-    city: 'Lagos',
-    address: 'Victoria Island, Lagos',
-    role: 'ADMIN',
-    status: 'APPROVED',
-    auth_provider: 'EMAIL',
-    google_sub: null,
-    apple_sub: null,
-    avatar_url: null,
-    admin_note: 'Primary platform administrator account',
-    token_version: 0,
-    must_change_password: false,
-    failed_login_attempts: 0,
-    locked_until: null,
-    last_login_at: now,
-    approved_at: now,
-    approved_by: 1,
-    created_at: now,
-    updated_at: now,
-  };
-
-  const products = STARTER_CATALOG.map(
-    ([sku, name, category, unit, cost, sell, reorder, supplier], idx) => ({
-      id: idx + 1,
-      user_id: 1,
-      sku,
-      name,
-      category,
-      unit,
-      cost_price: Number(cost),
-      selling_price: Number(sell),
-      stock_quantity: 0,
-      reorder_level: Number(reorder),
-      supplier_name: supplier,
-      created_at: now,
-      updated_at: now,
-    })
-  );
-
   return {
-    users: [adminUser],
-    audit_logs: [
-      {
-        id: 1,
-        actor_user_id: 1,
-        action: 'SYSTEM_BOOTSTRAP',
-        target_user_id: 1,
-        details: { note: 'Platform Admin initialized' },
-        ip_address: '127.0.0.1',
-        created_at: now,
-      },
-    ],
-    products,
+    users: [],
+    audit_logs: [],
+    products: [],
     stock_movements: [],
     cash_transactions: [],
     credit_records: [],
@@ -120,6 +59,7 @@ function toPublicUser(u, includeAdmin = false) {
     business_type: u.business_type,
     city: u.city,
     address: u.address,
+    currency: u.currency || 'NGN',
     role: u.role,
     status: u.status,
     auth_provider: u.auth_provider,
@@ -197,6 +137,7 @@ async function executeQuery(text, params = []) {
       apple_sub,
       avatar_url,
       approved_at,
+      currency,
     ] = params;
     const now = new Date().toISOString();
     const newUser = {
@@ -206,9 +147,10 @@ async function executeQuery(text, params = []) {
       full_name,
       business_name: business_name || '',
       phone: phone || null,
-      business_type: business_type || 'Provision Store',
+      business_type: business_type || 'Retail Store',
       city: city || 'Lagos',
       address: null,
+      currency: currency || 'NGN',
       role: role || 'USER',
       status: status || 'PENDING',
       auth_provider: auth_provider || 'EMAIL',
@@ -280,7 +222,7 @@ async function executeQuery(text, params = []) {
   }
 
   if (upper.startsWith('UPDATE USERS SET FULL_NAME = $1')) {
-    const [full_name, business_name, phone, business_type, city, address, id] = params;
+    const [full_name, business_name, phone, business_type, city, address, currency, id] = params;
     const u = state.users.find((x) => Number(x.id) === Number(id));
     if (u) {
       u.full_name = full_name;
@@ -289,6 +231,7 @@ async function executeQuery(text, params = []) {
       u.business_type = business_type;
       u.city = city;
       u.address = address;
+      if (currency) u.currency = currency;
       u.updated_at = new Date().toISOString();
       saveState(state);
     }

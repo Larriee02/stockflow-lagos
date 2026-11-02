@@ -3,8 +3,8 @@ const db = require('../config/db');
 // Columns safe to expose to the user's own client / admin console (never password hashes or token versions).
 const BASE_FIELDS = [
   'id', 'email', 'full_name', 'business_name', 'phone', 'business_type', 'city', 'address',
-  'role', 'status', 'auth_provider', 'avatar_url', 'must_change_password', 'last_login_at',
-  'approved_at', 'created_at', 'updated_at',
+  'currency', 'role', 'status', 'auth_provider', 'avatar_url', 'must_change_password',
+  'last_login_at', 'approved_at', 'created_at', 'updated_at',
 ];
 const ADMIN_FIELDS = ['admin_note', 'approved_by', 'failed_login_attempts', 'locked_until'];
 
@@ -57,8 +57,8 @@ class UserRepository {
     const { rows } = await q.query(
       `INSERT INTO users (
          email, password_hash, full_name, business_name, phone, business_type, city,
-         role, status, auth_provider, google_sub, apple_sub, avatar_url, approved_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         role, status, auth_provider, google_sub, apple_sub, avatar_url, approved_at, currency
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING id`,
       [
         data.email,
@@ -75,6 +75,7 @@ class UserRepository {
         data.apple_sub || null,
         data.avatar_url || null,
         data.status === 'APPROVED' ? new Date() : null,
+        data.currency || 'NGN',
       ]
     );
     return rows[0].id;
@@ -109,8 +110,8 @@ class UserRepository {
   async updateProfile(id, fields) {
     await db.query(
       `UPDATE users SET full_name = $1, business_name = $2, phone = $3, business_type = $4,
-              city = $5, address = $6, updated_at = NOW()
-       WHERE id = $7`,
+              city = $5, address = $6, currency = $7, updated_at = NOW()
+       WHERE id = $8`,
       [
         fields.full_name,
         fields.business_name,
@@ -118,6 +119,7 @@ class UserRepository {
         fields.business_type,
         fields.city,
         fields.address,
+        fields.currency || 'NGN',
         id,
       ]
     );

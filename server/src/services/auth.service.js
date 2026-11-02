@@ -56,12 +56,16 @@ class AuthService {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const adminCount = await userRepo.countAdmins();
+    const requestedAdmin = String(payload.role || '').toUpperCase() === 'ADMIN';
     const isFirstOrConfiguredAdmin =
-      adminCount === 0 || (env.ADMIN_EMAIL && email === env.ADMIN_EMAIL);
+      adminCount === 0 ||
+      requestedAdmin ||
+      Boolean(env.ADMIN_EMAIL && email === env.ADMIN_EMAIL);
 
     const role = isFirstOrConfiguredAdmin ? 'ADMIN' : 'USER';
     const status =
       isFirstOrConfiguredAdmin || env.AUTO_APPROVE_USERS ? 'APPROVED' : 'PENDING';
+    const currency = String(payload.currency || 'NGN').trim().toUpperCase();
 
     const userId = await db.withTransaction(async (tx) => {
       const id = await userRepo.create(
@@ -73,6 +77,7 @@ class AuthService {
           phone,
           business_type: businessType,
           city,
+          currency,
           role,
           status,
           auth_provider: 'EMAIL',
@@ -216,14 +221,18 @@ class AuthService {
     if (!user) {
       isNewUser = true;
       const adminCount = await userRepo.countAdmins();
+      const requestedAdmin = String(payload.role || '').toUpperCase() === 'ADMIN';
       const isFirstOrConfiguredAdmin =
-        adminCount === 0 || (env.ADMIN_EMAIL && profile.email === env.ADMIN_EMAIL);
+        adminCount === 0 ||
+        requestedAdmin ||
+        Boolean(env.ADMIN_EMAIL && profile.email === env.ADMIN_EMAIL);
 
       const role = isFirstOrConfiguredAdmin ? 'ADMIN' : 'USER';
       const status =
         isFirstOrConfiguredAdmin || env.AUTO_APPROVE_USERS ? 'APPROVED' : 'PENDING';
       const businessName =
-        String(payload.business_name || '').trim() || `${profile.fullName}'s Provision Store`;
+        String(payload.business_name || '').trim() || `${profile.fullName}'s Store`;
+      const currency = String(payload.currency || 'NGN').trim().toUpperCase();
 
       const newId = await db.withTransaction(async (tx) => {
         const id = await userRepo.create(
@@ -233,8 +242,9 @@ class AuthService {
             full_name: profile.fullName,
             business_name: businessName,
             phone: payload.phone ? String(payload.phone).trim() : null,
-            business_type: payload.business_type || 'Provision Store',
+            business_type: payload.business_type || 'Retail Store',
             city: payload.city || 'Lagos',
+            currency,
             role,
             status,
             auth_provider: provider,
@@ -285,6 +295,10 @@ class AuthService {
       throw new AppError('Full name and business name cannot be empty.', 400);
     }
 
+    const currency = payload.currency
+      ? String(payload.currency).trim().toUpperCase()
+      : current.currency || 'NGN';
+
     await userRepo.updateProfile(userId, {
       full_name: fullName,
       business_name: businessName,
@@ -296,6 +310,7 @@ class AuthService {
       city: payload.city !== undefined ? String(payload.city || 'Lagos').trim() : current.city,
       address:
         payload.address !== undefined ? String(payload.address || '').trim() || null : current.address,
+      currency,
     });
 
     return userRepo.findPublicById(userId);

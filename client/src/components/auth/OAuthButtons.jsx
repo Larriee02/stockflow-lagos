@@ -1,28 +1,29 @@
 import React, { useState } from 'react';
-import { Mail, User, Store, Phone, MapPin } from 'lucide-react';
+import { Mail, User, Store, Phone, MapPin, Globe, ShieldCheck } from 'lucide-react';
 import { apiFetch, setStoredToken } from '../../services/api';
+import { CURRENCY_OPTIONS } from '../../utils/currency';
 import { Modal } from '../ui/Modal';
 
 export const BUSINESS_TYPES = [
+  'Supermarket & Grocery',
   'Provision & Convenience Store',
-  'Mini-Mart / Supermarket',
-  'Wholesale Market Depot',
-  'Drinks & Beverage Retailer',
-  'Cosmetics & Household Goods',
-  'Pharmacy & Chemist',
-  'General Trading & Retail',
+  'Wholesale & Distribution',
+  'Beverage & Drinks Outlet',
+  'Pharmacy & Health Store',
+  'Cosmetics & Household Retail',
+  'General Merchandise',
 ];
 
 export const LAGOS_LOCATIONS = [
-  'Lagos Mainland (Ikeja / Yaba / Surulere)',
-  'Lagos Island (Oke-Arin / Idumota / Marina)',
-  'Lekki / Ajah / Victoria Island',
+  'Ikeja / Yaba / Surulere',
+  'Lagos Island / Marina',
+  'Lekki / Victoria Island / Ajah',
   'Mushin / Oshodi / Isolo',
-  'Alimosho / Egbeda / Iyana Ipaja',
-  'Festac / Trade Fair / Amuwo-Odofin',
-  'Ikorodu / Ketu / Mile 12',
+  'Alimosho / Egbeda',
+  'Festac / Amuwo-Odofin',
+  'Ikorodu / Ketu',
   'Agege / Ogba / Berger',
-  'Other Location (Nigeria)',
+  'Other Location',
 ];
 
 export function GoogleIcon() {
@@ -65,6 +66,8 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
     business_name: '',
     phone: '',
     city: LAGOS_LOCATIONS[0],
+    currency: 'NGN',
+    role: 'USER',
   });
 
   const handleOAuthSubmit = async (e) => {
@@ -82,6 +85,8 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
           business_name: oauthForm.business_name.trim(),
           phone: oauthForm.phone.trim(),
           city: oauthForm.city,
+          currency: oauthForm.currency,
+          role: oauthForm.role,
         }),
       });
       if (data.token) setStoredToken(data.token);
@@ -126,34 +131,32 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
       <Modal
         isOpen={Boolean(oauthProvider)}
         onClose={() => setOauthProvider(null)}
-        title={`${actionLabel} with ${oauthProvider === 'GOOGLE' ? 'Google' : 'Apple ID'}`}
+        title={`${actionLabel} with ${oauthProvider === 'GOOGLE' ? 'Google' : 'Apple'}`}
         subtitle={
           oauthProvider === 'GOOGLE'
-            ? 'Sign in or create your StockFlow Lagos store account with your Google Workspace / Gmail identity'
-            : 'Sign in or create your StockFlow Lagos store account with your Apple ID'
+            ? 'Authenticate using your Google account'
+            : 'Authenticate using your Apple ID'
         }
       >
         <form onSubmit={handleOAuthSubmit} className="space-y-3.5">
           <div className="liquid-glass-subtle p-3.5 rounded-2xl flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-white dark:bg-stone-800 shadow-xs">
+            <div className="p-2.5 rounded-xl bg-white dark:bg-slate-800 shadow-xs">
               {oauthProvider === 'GOOGLE' ? <GoogleIcon /> : <AppleIcon />}
             </div>
             <div className="text-xs">
               <div className="font-extrabold text-theme-primary">
-                {oauthProvider === 'GOOGLE'
-                  ? 'Google Identity Verification'
-                  : 'Apple ID Verification'}
+                {oauthProvider === 'GOOGLE' ? 'Google Authentication' : 'Apple ID Authentication'}
               </div>
               <div className="text-theme-secondary">
-                Existing accounts sign in immediately; new accounts are registered for Admin
-                approval.
+                Returning accounts sign in immediately. New accounts are created with the details
+                below.
               </div>
             </div>
           </div>
 
           <div>
             <label className="block text-xs font-bold mb-1 text-theme-primary">
-              {oauthProvider === 'GOOGLE' ? 'Google Email Address' : 'Apple ID Email Address'}
+              {oauthProvider === 'GOOGLE' ? 'Google Email' : 'Apple ID Email'}
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
@@ -162,7 +165,7 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
                 required
                 autoFocus
                 placeholder={
-                  oauthProvider === 'GOOGLE' ? 'yourname@gmail.com' : 'yourname@icloud.com'
+                  oauthProvider === 'GOOGLE' ? 'name@gmail.com' : 'name@icloud.com'
                 }
                 value={oauthForm.email}
                 onChange={(e) => setOauthForm({ ...oauthForm, email: e.target.value })}
@@ -174,13 +177,13 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Your Full Name (For New Accounts)
+                Full Name (New Accounts)
               </label>
               <div className="relative">
                 <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
                 <input
                   type="text"
-                  placeholder="e.g. Alhaja Bisi Adeyemi"
+                  placeholder="Full name"
                   value={oauthForm.full_name}
                   onChange={(e) => setOauthForm({ ...oauthForm, full_name: e.target.value })}
                   className="liquid-input w-full pl-10 pr-3 py-2.5 rounded-xl text-xs"
@@ -190,13 +193,13 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
 
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Shop / Business Name (For New Accounts)
+                Business Name (New Accounts)
               </label>
               <div className="relative">
                 <Store className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
                 <input
                   type="text"
-                  placeholder="e.g. Adeyemi Mega Stores"
+                  placeholder="Store or company name"
                   value={oauthForm.business_name}
                   onChange={(e) =>
                     setOauthForm({ ...oauthForm, business_name: e.target.value })
@@ -210,13 +213,52 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                WhatsApp Phone (Optional)
+                Account Type (New Accounts)
+              </label>
+              <div className="relative">
+                <ShieldCheck className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
+                <select
+                  value={oauthForm.role}
+                  onChange={(e) => setOauthForm({ ...oauthForm, role: e.target.value })}
+                  className="liquid-input w-full pl-10 pr-3 py-2.5 rounded-xl text-xs"
+                >
+                  <option value="USER">Store Owner / Merchant</option>
+                  <option value="ADMIN">Administrator</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold mb-1 text-theme-primary">
+                Default Currency
+              </label>
+              <div className="relative">
+                <Globe className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
+                <select
+                  value={oauthForm.currency}
+                  onChange={(e) => setOauthForm({ ...oauthForm, currency: e.target.value })}
+                  className="liquid-input w-full pl-10 pr-3 py-2.5 rounded-xl text-xs"
+                >
+                  {CURRENCY_OPTIONS.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.symbol} — {c.code} ({c.name})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold mb-1 text-theme-primary">
+                Phone Number (Optional)
               </label>
               <div className="relative">
                 <Phone className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
                 <input
                   type="tel"
-                  placeholder="0803 000 0000"
+                  placeholder="+234 800 000 0000"
                   value={oauthForm.phone}
                   onChange={(e) => setOauthForm({ ...oauthForm, phone: e.target.value })}
                   className="liquid-input w-full pl-10 pr-3 py-2.5 rounded-xl text-xs"
@@ -226,7 +268,7 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
 
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Market / Area Location
+                Location
               </label>
               <div className="relative">
                 <MapPin className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />

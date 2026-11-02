@@ -21,30 +21,25 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
+import { formatCurrency } from '../../utils/currency';
 import { useDebounce } from '../../hooks/useDebounce';
 import { StatCard } from '../ui/StatCard';
 import { Badge } from '../ui/Badge';
 import { Modal } from '../ui/Modal';
 import { EmptyState } from '../ui/EmptyState';
 
-const formatNaira = (val) => {
-  const num = Number(val || 0);
-  if (Number.isNaN(num)) return '₦0';
-  const isWhole = num % 1 === 0;
-  const fixed = isWhole ? String(Math.round(num)) : num.toFixed(2);
-  const parts = fixed.split('.');
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `₦${parts.join('.')}`;
-};
-
 const STATUS_BADGE = {
   APPROVED: { variant: 'success', label: 'APPROVED' },
-  PENDING: { variant: 'warning', label: 'PENDING APPROVAL' },
+  PENDING: { variant: 'warning', label: 'PENDING' },
   SUSPENDED: { variant: 'danger', label: 'SUSPENDED' },
   REJECTED: { variant: 'danger', label: 'REJECTED' },
 };
 
 export function AdminConsole({ currentUser, onToast }) {
+  const formatMoney = useCallback(
+    (val, code) => formatCurrency(val, code || currentUser?.currency || 'NGN'),
+    [currentUser?.currency]
+  );
   const [subView, setSubView] = useState('users'); // 'users' | 'audit'
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState({});
@@ -612,10 +607,10 @@ export function AdminConsole({ currentUser, onToast }) {
 
                         <td className="py-3.5 px-3 text-right tabular-nums">
                           <div className="font-extrabold text-theme-inflow">
-                            {formatNaira(u.total_inflow)}
+                            {formatMoney(u.total_inflow, u.currency)}
                           </div>
                           <div className="text-[11px] text-theme-secondary">
-                            {u.product_count || 0} SKUs
+                            {u.product_count || 0} SKUs • {u.currency || 'NGN'}
                           </div>
                         </td>
 
@@ -789,10 +784,10 @@ export function AdminConsole({ currentUser, onToast }) {
               <div className="grid grid-cols-3 gap-2.5">
                 <div className="liquid-glass-subtle p-3 rounded-2xl">
                   <div className="text-[10px] font-bold uppercase text-theme-secondary">
-                    Shelf Value
+                    Inventory Value
                   </div>
                   <div className="text-sm font-extrabold font-luxury tabular-nums text-theme-primary mt-0.5">
-                    {formatNaira(detailData.storeStats.stock_retail_value)}
+                    {formatMoney(detailData.storeStats.stock_retail_value, inspectingUser?.currency)}
                   </div>
                   <div className="text-[10px] text-theme-secondary">
                     {detailData.storeStats.product_count} products
@@ -801,10 +796,10 @@ export function AdminConsole({ currentUser, onToast }) {
 
                 <div className="liquid-glass-subtle p-3 rounded-2xl">
                   <div className="text-[10px] font-bold uppercase text-theme-secondary">
-                    Total Cash In
+                    Total Inflow
                   </div>
                   <div className="text-sm font-extrabold font-luxury tabular-nums text-theme-inflow mt-0.5">
-                    {formatNaira(detailData.storeStats.total_inflow)}
+                    {formatMoney(detailData.storeStats.total_inflow, inspectingUser?.currency)}
                   </div>
                   <div className="text-[10px] text-theme-secondary">
                     {detailData.storeStats.sale_count} sales
@@ -813,13 +808,13 @@ export function AdminConsole({ currentUser, onToast }) {
 
                 <div className="liquid-glass-subtle p-3 rounded-2xl">
                   <div className="text-[10px] font-bold uppercase text-theme-secondary">
-                    Active Debtors
+                    Receivables
                   </div>
                   <div className="text-sm font-extrabold font-luxury tabular-nums text-theme-outflow mt-0.5">
-                    {detailData.storeStats.active_debtors} owing
+                    {detailData.storeStats.active_debtors} active
                   </div>
                   <div className="text-[10px] text-theme-secondary">
-                    Outflow: {formatNaira(detailData.storeStats.total_outflow)}
+                    Outflow: {formatMoney(detailData.storeStats.total_outflow, inspectingUser?.currency)}
                   </div>
                 </div>
               </div>

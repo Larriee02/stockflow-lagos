@@ -30,9 +30,9 @@ const env = {
   JWT_SECRET_MISSING: false,
   SESSION_DAYS: Number(process.env.SESSION_DAYS) || 7,
 
-  ADMIN_EMAIL: (process.env.ADMIN_EMAIL || 'admin@stockflowlagos.com').trim().toLowerCase(),
-  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'Admin@2026',
-  ADMIN_NAME: process.env.ADMIN_NAME || 'StockFlow Super Admin',
+  ADMIN_EMAIL: (process.env.ADMIN_EMAIL || '').trim().toLowerCase(),
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || '',
+  ADMIN_NAME: process.env.ADMIN_NAME || 'Administrator',
 
   AUTO_APPROVE_USERS: bool(process.env.AUTO_APPROVE_USERS, false),
 

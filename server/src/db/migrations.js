@@ -151,4 +151,22 @@ module.exports = [
       DROP TABLE IF EXISTS store_settings;
     `,
   },
+  {
+    id: '003_user_currency_and_clean_live',
+    sql: `
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'NGN';
+
+      -- Remove demo/test accounts and any unowned legacy rows for clean live testing
+      DELETE FROM users
+      WHERE LOWER(email) = 'admin@stockflowlagos.com'
+         OR LOWER(email) LIKE 'trader_%@lagos.ng'
+         OR LOWER(email) LIKE 'google_trader_%@gmail.com'
+         OR LOWER(email) LIKE 'apple_trader_%@icloud.com';
+
+      DELETE FROM cash_transactions WHERE user_id IS NULL;
+      DELETE FROM stock_movements WHERE user_id IS NULL;
+      DELETE FROM credit_records WHERE user_id IS NULL;
+      DELETE FROM products WHERE user_id IS NULL;
+    `,
+  },
 ];

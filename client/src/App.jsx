@@ -41,42 +41,33 @@ import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { AdminPage } from './pages/AdminPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { RouterProvider, useRouter } from './router/RouterContext';
 import { apiFetch, setStoredToken } from './services/api';
-
-// Universal Cross-OS Nigerian Naira (₦) Formatter
-const formatNaira = (val) => {
-  const num = Number(val || 0);
-  if (Number.isNaN(num)) return '₦0';
-  const isWhole = num % 1 === 0;
-  const fixed = isWhole ? String(Math.round(num)) : num.toFixed(2);
-  const parts = fixed.split('.');
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `₦${parts.join('.')}`;
-};
+import { formatCurrency, getCurrencySymbol } from './utils/currency';
 
 const PAYMENT_CHANNEL_LABELS = {
-  CASH: 'Cash (Naira Notes)',
-  POS: 'POS (Moniepoint / OPay)',
-  BANK_TRANSFER: 'Bank Transfer (OPay / Bank)',
-  MOBILE_MONEY: 'Mobile Wallet / USSD',
+  CASH: 'Cash',
+  POS: 'POS Terminal',
+  BANK_TRANSFER: 'Bank Transfer',
+  MOBILE_MONEY: 'Mobile Wallet',
 };
 
 const LAGOS_EXPENSE_PRESETS = [
-  'Market Restock (Oke-Arin / Mushin / Trade Fair)',
-  'Generator Fuel / Petrol',
-  'EKEDC / Ikeja Electric (Prepaid Light)',
-  'Market Transport (Keke / Bus / Loader)',
-  'Shop Rent / Store Charge',
-  'POS Charges / Bank Stamp Duty',
-  'LAWMA / Street Security Levy',
-  'Nylon / Packaging Bags',
+  'Inventory Restock',
+  'Generator & Power',
+  'Electricity & Utilities',
+  'Logistics & Transport',
+  'Store Rent & Lease',
+  'POS & Bank Charges',
+  'Security & Maintenance',
+  'Packaging & Supplies',
 ];
 
 const INITIAL_PRODUCT_FORM = {
   sku: '',
   name: '',
-  category: 'Milk & Drinks',
+  category: 'Beverages & Dairy',
   unit: 'Pack',
   cost_price: '',
   selling_price: '',
@@ -87,7 +78,7 @@ const INITIAL_PRODUCT_FORM = {
 
 const INITIAL_CASH_FORM = {
   type: 'OUTFLOW',
-  category: 'Generator Fuel / Petrol',
+  category: 'Inventory Restock',
   amount: '',
   payment_method: 'CASH',
   counterparty_name: '',
@@ -152,6 +143,13 @@ function AppShell() {
   // Authenticated SaaS User State
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
+
+  const currencyCode = currentUser?.currency || 'NGN';
+  const currencySymbol = getCurrencySymbol(currencyCode);
+  const formatNaira = useCallback(
+    (val) => formatCurrency(val, currencyCode),
+    [currencyCode]
+  );
 
   const [activeTab, setActiveTab] = useState(() => ROUTE_TO_TAB[path] || 'counter');
   const [loading, setLoading] = useState(true);
@@ -795,55 +793,55 @@ function AppShell() {
       {
         id: 'counter',
         route: '/store/sell',
-        label: '1. Quick Sell',
-        shortLabel: 'Sell',
-        title: 'Counter Point-of-Sale & Digital Receipts',
-        subtitle: 'Tap provision goods to build a customer basket, record payment, and issue a WhatsApp receipt.',
+        label: 'Point of Sale',
+        shortLabel: 'POS',
+        title: 'Point of Sale & Checkout',
+        subtitle: 'Select products to build a customer order, process payment, and issue a receipt.',
         icon: ShoppingCart,
       },
       {
         id: 'inventory',
         route: '/store/stock',
-        label: '2. Shelf Stock',
+        label: 'Inventory',
         shortLabel: 'Stock',
-        title: 'Shelf Inventory & Smart Market Restock Planner',
-        subtitle: 'Manage shelf quantities, buying/selling prices, unit profit margins, and market restock orders.',
+        title: 'Inventory & Stock Management',
+        subtitle: 'Manage product quantities, cost and selling prices, unit margins, and restock alerts.',
         icon: ClipboardCheck,
       },
       {
         id: 'cashbook',
         route: '/store/cash',
-        label: '3. Money In/Out',
+        label: 'Cashbook',
         shortLabel: 'Cash',
-        title: 'Naira Cashbook (Inflows & Shop Expenses)',
-        subtitle: 'Track every Naira entering or leaving your store across Cash, Moniepoint/OPay POS, and Bank Transfers.',
+        title: 'Cashbook & Expense Ledger',
+        subtitle: 'Track inflows and operating expenses across Cash, POS terminals, and Bank Transfers.',
         icon: Wallet,
       },
       {
         id: 'history',
         route: '/store/history',
-        label: '4. Check History',
-        shortLabel: 'History',
-        title: 'Complete Store Activity & Movement Ledger',
-        subtitle: 'Audit every past counter sale, market restock, physical shelf count, and damaged item record.',
+        label: 'Activity',
+        shortLabel: 'Activity',
+        title: 'Activity & Movement Ledger',
+        subtitle: 'Review past sales, restocks, stock adjustments, and damaged inventory records.',
         icon: History,
       },
       {
         id: 'debtors',
         route: '/store/debtors',
-        label: `5. Debtors (${dashboard.active_debtors_count || 0})`,
-        shortLabel: 'Debtors',
-        title: 'Customer Credit Book & Debt Recovery',
-        subtitle: 'Send 1-click WhatsApp balance reminders and record customer debt repayments directly into your Cashbook.',
+        label: `Credit Book (${dashboard.active_debtors_count || 0})`,
+        shortLabel: 'Credit',
+        title: 'Customer Credit & Receivables',
+        subtitle: 'Track outstanding customer balances, send reminders, and record repayments.',
         icon: Users,
       },
       {
         id: 'analytics',
         route: '/store/summary',
-        label: '6. POS vs Cash',
+        label: 'Analytics',
         shortLabel: 'Summary',
-        title: 'POS vs Cash Drawer Reconciliation & Category Capital',
-        subtitle: 'Compare physical Naira in your drawer against POS/Transfer balances and inspect capital by category.',
+        title: 'Channel Reconciliation & Category Valuation',
+        subtitle: 'Compare physical cash against POS and transfer balances and review capital by category.',
         icon: BarChart3,
       },
     ],
@@ -862,15 +860,15 @@ function AppShell() {
         full_name: user.full_name || '',
         business_name: user.business_name || '',
         phone: user.phone || '',
-        location: user.location || 'Lagos, Nigeria',
+        location: user.location || '',
       });
       if (user.role === 'ADMIN') {
-        showSuccessToast(`Welcome back, ${user.full_name} (Super Admin)!`);
+        showSuccessToast(`Welcome back, ${user.full_name}`);
         navigate('/admin');
       } else if (user.status !== 'APPROVED') {
         navigate('/pending');
       } else {
-        showSuccessToast(`Welcome to ${user.business_name}!`);
+        showSuccessToast(`Signed in to ${user.business_name || 'Workspace'}`);
         navigate('/store/sell');
       }
     },
@@ -882,11 +880,11 @@ function AppShell() {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="liquid-glass rounded-3xl px-8 py-6 text-center space-y-2">
-          <div className="w-10 h-10 mx-auto rounded-2xl liquid-btn-gold flex items-center justify-center animate-pulse">
+          <div className="w-10 h-10 mx-auto rounded-2xl liquid-btn-primary flex items-center justify-center animate-pulse">
             <Package className="w-5 h-5" />
           </div>
           <p className="text-xs font-bold text-theme-secondary">
-            Loading StockFlow Lagos Sovereign Suite...
+            Loading workspace...
           </p>
         </div>
       </div>
@@ -915,7 +913,21 @@ function AppShell() {
     );
   }
 
-  // 3. Pending Approval / Suspended / Rejected -> Render Dedicated Standalone Account Governance Page (/pending)
+  // 3. Dedicated Standalone Settings Page (/settings) for both Admin and User accounts
+  if (path === '/settings' || path === '/store/settings' || path === '/admin/settings') {
+    return (
+      <SettingsPage
+        currentUser={currentUser}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
+        onNavigate={navigate}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  // 4. Pending Approval / Suspended / Rejected -> Render Dedicated Standalone Account Governance Page (/pending)
   if (currentUser.status !== 'APPROVED' && currentUser.role !== 'ADMIN') {
     return (
       <AccountStatusScreen
@@ -928,12 +940,13 @@ function AppShell() {
             navigate('/store/sell');
           }
         }}
+        onNavigate={navigate}
         onLogout={handleLogout}
       />
     );
   }
 
-  // 4. Dedicated Standalone Executive Admin Governance Page (/admin)
+  // 5. Dedicated Standalone Executive Admin Governance Page (/admin)
   if (currentUser.role === 'ADMIN' && (path === '/admin' || path.startsWith('/admin/'))) {
     return (
       <AdminPage
@@ -950,62 +963,58 @@ function AppShell() {
 
   return (
     <div className="min-h-screen pb-24 md:pb-10">
-      {/* Liquid Glass Top Navigation Header */}
-      <header className="liquid-glass-header text-stone-100 sticky top-0 z-30">
+      {/* Top Navigation Header */}
+      <header className="liquid-glass-header text-slate-100 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-2 rounded-2xl liquid-btn-gold shrink-0">
+            <div className="p-2 rounded-2xl liquid-btn-primary shrink-0">
               <Package className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1
-                  style={{ color: '#f8f4ec' }}
-                  className="text-base sm:text-xl font-extrabold font-luxury tracking-tight truncate"
-                >
-                  {currentUser.business_name || 'StockFlow Lagos'}
+                <h1 className="text-base sm:text-xl font-extrabold font-luxury tracking-tight truncate text-white">
+                  {currentUser.business_name || 'StockFlow'}
                 </h1>
-                <span className="hidden xs:inline-block text-[10px] sm:text-[11px] bg-amber-400/20 text-amber-200 border border-amber-300/35 px-2.5 py-0.5 rounded-full font-extrabold">
-                  {currentUser.role === 'ADMIN' ? 'Super Admin • ₦' : 'Verified Store • ₦'}
+                <span className="hidden xs:inline-block text-[10px] sm:text-[11px] bg-sky-400/20 text-sky-200 border border-sky-300/35 px-2.5 py-0.5 rounded-full font-extrabold">
+                  {currentUser.role === 'ADMIN' ? 'Admin' : 'Verified'} • {currencyCode} ({currencySymbol})
                 </span>
               </div>
-              <p className="text-[11px] sm:text-xs text-stone-300/90 truncate font-medium">
-                {currentUser.full_name} • {currentUser.location || 'Lagos, Nigeria'}
+              <p className="text-[11px] sm:text-xs text-slate-300/90 truncate font-medium">
+                {currentUser.full_name} {currentUser.location ? `• ${currentUser.location}` : ''}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Navigate to Dedicated Standalone /admin Page (For Admin Users) */}
+            {/* Navigate to Admin Console (For Admin Users) */}
             {currentUser.role === 'ADMIN' && (
               <button
                 type="button"
                 onClick={() => navigate('/admin')}
-                className="liquid-btn-gold flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-extrabold cursor-pointer"
+                className="liquid-btn-primary flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-extrabold cursor-pointer"
               >
                 <ShieldCheck className="w-4 h-4" />
-                <span>Admin Portal (/admin)</span>
+                <span>Admin Console</span>
               </button>
             )}
 
-            {/* Smooth Dark / Light Mode Liquid Glass Toggle */}
+            {/* Theme Toggle */}
             <button
               type="button"
               onClick={() => setDarkMode(!darkMode)}
-              title={darkMode ? 'Switch to Warm Ivory Mode' : 'Switch to Royal Obsidian Mode'}
+              title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
               aria-label="Toggle color theme"
-              style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
-              className="flex items-center gap-1.5 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
+              className="flex items-center gap-1.5 bg-white/12 hover:bg-white/20 text-slate-100 border border-white/25 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
               {darkMode ? (
                 <>
-                  <Sun className="w-4 h-4 text-amber-300" />
-                  <span className="hidden lg:inline">Ivory</span>
+                  <Sun className="w-4 h-4 text-sky-300" />
+                  <span className="hidden lg:inline">Light</span>
                 </>
               ) : (
                 <>
-                  <Moon className="w-4 h-4 text-amber-200" />
-                  <span className="hidden lg:inline">Obsidian</span>
+                  <Moon className="w-4 h-4 text-sky-200" />
+                  <span className="hidden lg:inline">Dark</span>
                 </>
               )}
             </button>
@@ -1016,12 +1025,11 @@ function AppShell() {
                 setProductForm(INITIAL_PRODUCT_FORM);
                 setShowProductModal(true);
               }}
-              style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
-              className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
+              className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-slate-100 border border-white/25 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span className="hidden xs:inline">Add</span>
-              <span>Goods</span>
+              <span className="hidden xs:inline">New</span>
+              <span>Product</span>
             </button>
 
             <button
@@ -1033,26 +1041,24 @@ function AppShell() {
             >
               <Wallet className="w-4 h-4" />
               <span className="hidden xs:inline">Record</span>
-              <span>Cash</span>
+              <span>Entry</span>
             </button>
 
             <button
               type="button"
-              onClick={() => setShowProfileModal(true)}
-              title="Store Profile & Account Settings"
-              style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
-              className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
+              onClick={() => navigate('/settings')}
+              title="Account & Currency Settings"
+              className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-slate-100 border border-white/25 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
-              <Settings className="w-4 h-4 text-amber-200" />
-              <span className="hidden md:inline">Account</span>
+              <Settings className="w-4 h-4 text-sky-300" />
+              <span className="hidden md:inline">Settings</span>
             </button>
 
             <button
               type="button"
               onClick={handleLogout}
               title="Sign Out"
-              style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
-              className="flex items-center gap-1 bg-rose-500/25 hover:bg-rose-500/40 text-stone-100 border border-rose-300/35 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
+              className="flex items-center gap-1 bg-rose-500/25 hover:bg-rose-500/40 text-slate-100 border border-rose-300/35 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
               <LogOut className="w-4 h-4 text-rose-200" />
               <span className="hidden sm:inline">Sign Out</span>
@@ -1065,7 +1071,7 @@ function AppShell() {
         {/* Toast Alert */}
         {toast && (
           <div className="liquid-btn-primary px-4 py-3 rounded-2xl text-sm font-semibold flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-amber-200 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-sky-200 shrink-0" />
             <span>{toast}</span>
           </div>
         )}
@@ -1077,15 +1083,15 @@ function AppShell() {
               onClick={() => fetchAllData()}
               className="text-xs font-bold underline cursor-pointer shrink-0"
             >
-              Try Again
+              Retry
             </button>
           </div>
         )}
 
-        {/* 4 Liquid Glass KPI Cards (Compact 2x2 on Mobile, 4-col on Desktop) */}
+        {/* 4 KPI Cards */}
         <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
           <StatCard
-            title="Total Money Available"
+            title="Net Balance"
             value={formatNaira(dashboard.net_cash_balance)}
             icon={Wallet}
             loading={loading}
@@ -1103,7 +1109,7 @@ function AppShell() {
             }
           />
           <StatCard
-            title="Shelf Goods Value"
+            title="Inventory Value"
             value={formatNaira(dashboard.inventory_retail_value)}
             icon={Package}
             loading={loading}
@@ -1113,7 +1119,7 @@ function AppShell() {
                 <strong className="text-theme-primary tabular-nums">
                   {formatNaira(dashboard.inventory_cost_value)}
                 </strong>{' '}
-                | Gain:{' '}
+                | Margin:{' '}
                 <strong className="text-theme-inflow tabular-nums">
                   +{formatNaira(dashboard.projected_gross_margin)}
                 </strong>
@@ -1121,7 +1127,7 @@ function AppShell() {
             }
           />
           <StatCard
-            title="Customers Owing Me"
+            title="Receivables"
             value={formatNaira(dashboard.total_credit_owed)}
             valueColor={
               Number(dashboard.total_credit_owed) > 0
@@ -1133,15 +1139,15 @@ function AppShell() {
             subtitle={
               <span>
                 <strong className="text-theme-primary">
-                  {dashboard.active_debtors_count || 0} customer(s)
+                  {dashboard.active_debtors_count || 0} account(s)
                 </strong>{' '}
-                owing balance
+                outstanding
               </span>
             }
           />
           <StatCard
-            title="Market Restock List"
-            value={`${dashboard.low_stock_count || 0} Goods Low`}
+            title="Restock Alerts"
+            value={`${dashboard.low_stock_count || 0} Low Stock`}
             valueColor={
               Number(dashboard.low_stock_count) > 0
                 ? 'text-theme-warning'
@@ -1153,15 +1159,15 @@ function AppShell() {
               <button
                 type="button"
                 onClick={() => setShowRestockModal(true)}
-                className="text-theme-gold font-extrabold underline cursor-pointer"
+                className="text-theme-brand font-extrabold underline cursor-pointer"
               >
-                Generate Market Buying List →
+                View Restock Plan →
               </button>
             }
           />
         </section>
 
-        {/* Responsive Store Page Route Navigation Bar (3x2 Grid on Mobile, Pill Row on Desktop) */}
+        {/* Workspace Navigation Bar */}
         <div
           ref={tabSectionRef}
           style={{ scrollMarginTop: '4.5rem' }}
@@ -1191,19 +1197,22 @@ function AppShell() {
           </div>
         </div>
 
-        {/* Dedicated Page Identity Header (Shows Current Standalone Store Route & Purpose) */}
+        {/* Section Header */}
         <div className="liquid-glass-subtle px-4 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm sm:text-base font-extrabold font-luxury text-theme-primary">
-                {currentPageMeta.title}
-              </h2>
-              <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full liquid-glass text-theme-gold">
-                Page Route: {currentPageMeta.route}
-              </span>
-            </div>
+            <h2 className="text-sm sm:text-base font-extrabold font-luxury text-theme-primary">
+              {currentPageMeta.title}
+            </h2>
             <p className="text-xs text-theme-secondary mt-0.5">{currentPageMeta.subtitle}</p>
           </div>
+          <button
+            type="button"
+            onClick={() => navigate('/settings')}
+            className="text-xs font-extrabold text-theme-brand hover:underline cursor-pointer flex items-center gap-1"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>Currency: {currencyCode} ({currencySymbol})</span>
+          </button>
         </div>
 
         {/* TAB 1: QUICK SELL (SHOP COUNTER) */}
@@ -1899,7 +1908,7 @@ function AppShell() {
                         <th className="py-3.5 px-4">Category</th>
                         <th className="py-3.5 px-4">Details</th>
                         <th className="py-3.5 px-4">Payment Channel</th>
-                        <th className="py-3.5 px-4 text-right">Amount (₦)</th>
+                        <th className="py-3.5 px-4 text-right">Amount ({currencySymbol})</th>
                         <th className="py-3.5 px-4 text-right"></th>
                       </tr>
                     </thead>
@@ -2210,7 +2219,7 @@ function AppShell() {
                           <th className="py-3.5 px-4 text-right">Before</th>
                           <th className="py-3.5 px-4 text-right">Qty Changed</th>
                           <th className="py-3.5 px-4 text-right">After (Shelf)</th>
-                          <th className="py-3.5 px-4 text-right">Value (₦)</th>
+                          <th className="py-3.5 px-4 text-right">Value ({currencySymbol})</th>
                           <th className="py-3.5 px-4">Customer / Supplier / Note</th>
                         </tr>
                       </thead>
@@ -2639,9 +2648,9 @@ function AppShell() {
         <form onSubmit={handleRecordMovement} className="space-y-4">
           <div className="grid grid-cols-3 gap-2">
             {[
-              { id: 'RESTOCK', label: '1. Bought from Market' },
-              { id: 'ADJUSTMENT', label: '2. Count Shelf Stock' },
-              { id: 'DAMAGE', label: '3. Spoiled / Damaged' },
+              { id: 'RESTOCK', label: 'Restock' },
+              { id: 'ADJUSTMENT', label: 'Stock Count' },
+              { id: 'DAMAGE', label: 'Damaged' },
             ].map((t) => (
               <button
                 type="button"
@@ -2850,7 +2859,7 @@ function AppShell() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Buying Cost Price (₦)
+                Cost Price ({currencySymbol})
               </label>
               <input
                 type="number"
@@ -2863,7 +2872,7 @@ function AppShell() {
             </div>
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Shop Selling Price (₦)
+                Selling Price ({currencySymbol})
               </label>
               <input
                 type="number"
@@ -3030,7 +3039,7 @@ function AppShell() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Amount (₦)
+                Amount ({currencySymbol})
               </label>
               <input
                 type="number"
@@ -3050,10 +3059,10 @@ function AppShell() {
                 onChange={(e) => setCashForm({ ...cashForm, payment_method: e.target.value })}
                 className="liquid-input w-full rounded-xl px-3 py-2 text-sm"
               >
-                <option value="CASH">Cash (Naira Notes)</option>
-                <option value="POS">POS (Moniepoint / OPay)</option>
+                <option value="CASH">Cash</option>
+                <option value="POS">POS Terminal</option>
                 <option value="BANK_TRANSFER">Bank Transfer</option>
-                <option value="MOBILE_MONEY">Mobile Wallet / USSD</option>
+                <option value="MOBILE_MONEY">Mobile Wallet</option>
               </select>
             </div>
           </div>
@@ -3102,7 +3111,7 @@ function AppShell() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Amount Paid Now (₦)
+                Amount Paid ({currencySymbol})
               </label>
               <input
                 type="number"
@@ -3115,16 +3124,16 @@ function AppShell() {
             </div>
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                How did they pay?
+                Payment Channel
               </label>
               <select
                 value={repayMethod}
                 onChange={(e) => setRepayMethod(e.target.value)}
                 className="liquid-input w-full rounded-xl px-3 py-2 text-sm"
               >
-                <option value="CASH">Cash (Naira Notes)</option>
-                <option value="BANK_TRANSFER">Bank Transfer (OPay / Bank)</option>
-                <option value="POS">POS (Moniepoint / OPay)</option>
+                <option value="CASH">Cash</option>
+                <option value="BANK_TRANSFER">Bank Transfer</option>
+                <option value="POS">POS Terminal</option>
               </select>
             </div>
           </div>

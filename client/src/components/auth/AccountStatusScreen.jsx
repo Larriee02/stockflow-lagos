@@ -10,6 +10,7 @@ import {
   Package,
   Store,
   Mail,
+  Settings,
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { Badge } from '../ui/Badge';
@@ -19,6 +20,7 @@ export function AccountStatusScreen({
   darkMode,
   setDarkMode,
   onUserUpdated,
+  onNavigate,
   onLogout,
 }) {
   const [checking, setChecking] = useState(false);
@@ -39,7 +41,6 @@ export function AccountStatusScreen({
     }
   };
 
-  // Auto-poll every 10 seconds while pending so approval unlocks automatically
   useEffect(() => {
     if (user?.status !== 'PENDING') return;
     const timer = setInterval(checkStatus, 10000);
@@ -57,11 +58,22 @@ export function AccountStatusScreen({
             <Package className="w-5 h-5" />
           </div>
           <span className="font-extrabold font-luxury text-base sm:text-lg text-theme-primary">
-            StockFlow Lagos
+            StockFlow
           </span>
         </div>
 
         <div className="flex items-center gap-2">
+          {onNavigate && (
+            <button
+              type="button"
+              onClick={() => onNavigate('/settings')}
+              className="liquid-glass-subtle px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 text-theme-primary cursor-pointer"
+            >
+              <Settings className="w-4 h-4 text-theme-brand" />
+              <span>Settings</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setDarkMode(!darkMode)}
@@ -69,7 +81,7 @@ export function AccountStatusScreen({
           >
             {darkMode ? (
               <>
-                <Sun className="w-4 h-4 text-amber-400" />
+                <Sun className="w-4 h-4 text-sky-400" />
                 <span>Light</span>
               </>
             ) : (
@@ -106,26 +118,26 @@ export function AccountStatusScreen({
           <div className="space-y-2">
             <Badge variant={isPending ? 'warning' : 'danger'}>
               {isPending
-                ? 'AWAITING ADMIN APPROVAL'
+                ? 'PENDING APPROVAL'
                 : isSuspended
                 ? 'ACCOUNT SUSPENDED'
-                : 'REGISTRATION DECLINED'}
+                : 'ACCESS DECLINED'}
             </Badge>
 
             <h1 className="text-xl sm:text-2xl font-extrabold font-luxury text-theme-primary pt-1">
               {isPending
-                ? 'Your Store Account Is Pending Approval'
+                ? 'Account Pending Administrator Approval'
                 : isSuspended
-                ? 'Your Store Access Is Currently Suspended'
-                : 'Your Store Registration Was Declined'}
+                ? 'Account Access Suspended'
+                : 'Account Registration Declined'}
             </h1>
 
             <p className="text-xs sm:text-sm text-theme-secondary leading-relaxed">
               {isPending
-                ? 'Thank you for registering on StockFlow Lagos! A platform administrator is reviewing your store registration. As soon as your account is approved, this screen will unlock automatically.'
+                ? 'Your registration has been received. An administrator will review and approve your account shortly. This page will unlock automatically once approved.'
                 : isSuspended
-                ? 'An administrator has temporarily paused access to this store account. Please contact the platform administrator to restore access.'
-                : 'Your registration request was declined by the platform administrator. Please contact support if you believe this was a mistake.'}
+                ? 'Access to this account has been temporarily paused by an administrator.'
+                : 'Your registration request was declined by the administrator.'}
             </p>
           </div>
 
@@ -138,12 +150,12 @@ export function AccountStatusScreen({
             </div>
             <div className="flex items-center justify-between gap-2">
               <span className="text-theme-secondary font-semibold flex items-center gap-1.5">
-                <Mail className="w-3.5 h-3.5" /> Account Email:
+                <Mail className="w-3.5 h-3.5" /> Email:
               </span>
               <span className="font-bold text-theme-primary">{user?.email}</span>
             </div>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-theme-secondary font-semibold">Sign-In Method:</span>
+              <span className="text-theme-secondary font-semibold">Authentication:</span>
               <Badge variant="info">{user?.auth_provider}</Badge>
             </div>
           </div>
@@ -156,7 +168,7 @@ export function AccountStatusScreen({
               className="liquid-btn-primary flex-1 py-3 px-4 rounded-2xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 cursor-pointer"
             >
               <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
-              <span>{checking ? 'Checking Status...' : 'Check Approval Status Now'}</span>
+              <span>{checking ? 'Checking...' : 'Check Status'}</span>
             </button>
 
             <button
@@ -169,13 +181,13 @@ export function AccountStatusScreen({
           </div>
 
           <p className="text-[11px] text-theme-secondary">
-            Last checked at {lastChecked.toLocaleTimeString()} (auto-refreshes every 10s)
+            Last checked at {lastChecked.toLocaleTimeString()}
           </p>
         </div>
       </div>
 
       <footer className="text-center text-[11px] text-theme-secondary">
-        StockFlow Lagos Security & Merchant Verification
+        StockFlow • Account Verification
       </footer>
     </div>
   );
