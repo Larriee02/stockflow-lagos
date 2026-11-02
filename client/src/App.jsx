@@ -37,9 +37,11 @@ import { Modal } from './components/ui/Modal';
 import { StatCard } from './components/ui/StatCard';
 import { Badge } from './components/ui/Badge';
 import { EmptyState } from './components/ui/EmptyState';
-import { AuthScreen } from './components/auth/AuthScreen';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
-import { AdminConsole } from './components/admin/AdminConsole';
+import { LoginPage } from './pages/LoginPage';
+import { SignupPage } from './pages/SignupPage';
+import { AdminPage } from './pages/AdminPage';
+import { RouterProvider, useRouter } from './router/RouterContext';
 import { apiFetch, setStoredToken } from './services/api';
 
 // Universal Cross-OS Nigerian Naira (₦) Formatter
@@ -92,7 +94,36 @@ const INITIAL_CASH_FORM = {
   description: '',
 };
 
+const ROUTE_TO_TAB = {
+  '/store': 'counter',
+  '/store/sell': 'counter',
+  '/store/stock': 'inventory',
+  '/store/cash': 'cashbook',
+  '/store/history': 'history',
+  '/store/debtors': 'debtors',
+  '/store/summary': 'analytics',
+};
+
+const TAB_TO_ROUTE = {
+  counter: '/store/sell',
+  inventory: '/store/stock',
+  cashbook: '/store/cash',
+  history: '/store/history',
+  debtors: '/store/debtors',
+  analytics: '/store/summary',
+};
+
 export default function App() {
+  return (
+    <RouterProvider>
+      <AppShell />
+    </RouterProvider>
+  );
+}
+
+function AppShell() {
+  const { path, navigate } = useRouter();
+
   const [darkMode, setDarkMode] = useState(() => {
     try {
       return localStorage.getItem('stockflow_theme') === 'dark';
@@ -122,11 +153,18 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
 
-  const [activeTab, setActiveTab] = useState('counter');
+  const [activeTab, setActiveTab] = useState(() => ROUTE_TO_TAB[path] || 'counter');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+
+  // Keep activeTab synchronized when user navigates via URL (/store/sell, /store/stock, etc.)
+  useEffect(() => {
+    if (ROUTE_TO_TAB[path]) {
+      setActiveTab(ROUTE_TO_TAB[path]);
+    }
+  }, [path]);
 
   // Server Data
   const [dashboard, setDashboard] = useState({});
@@ -202,6 +240,8 @@ export default function App() {
 
   const handleSelectTab = (tabId, scrollOnMobile = false) => {
     setActiveTab(tabId);
+    const targetRoute = TAB_TO_ROUTE[tabId] || '/store/sell';
+    navigate(targetRoute);
     if (scrollOnMobile && typeof window !== 'undefined' && window.innerWidth < 768) {
       setTimeout(() => {
         tabSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -246,6 +286,7 @@ export default function App() {
     setCart({});
     setShowProfileModal(false);
     setActiveTab('counter');
+    navigate('/login');
   };
 
   const isApprovedStoreAccess = Boolean(
@@ -749,80 +790,160 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const navItems = useMemo(() => {
-    const base = [
-      { id: 'counter', label: '1. Quick Sell', shortLabel: 'Sell', icon: ShoppingCart },
-      { id: 'inventory', label: '2. Shelf Stock', shortLabel: 'Stock', icon: ClipboardCheck },
-      { id: 'cashbook', label: '3. Money In/Out', shortLabel: 'Cash', icon: Wallet },
-      { id: 'history', label: '4. Check History', shortLabel: 'History', icon: History },
+  const navItems = useMemo(
+    () => [
+      {
+        id: 'counter',
+        route: '/store/sell',
+        label: '1. Quick Sell',
+        shortLabel: 'Sell',
+        title: 'Counter Point-of-Sale & Digital Receipts',
+        subtitle: 'Tap provision goods to build a customer basket, record payment, and issue a WhatsApp receipt.',
+        icon: ShoppingCart,
+      },
+      {
+        id: 'inventory',
+        route: '/store/stock',
+        label: '2. Shelf Stock',
+        shortLabel: 'Stock',
+        title: 'Shelf Inventory & Smart Market Restock Planner',
+        subtitle: 'Manage shelf quantities, buying/selling prices, unit profit margins, and market restock orders.',
+        icon: ClipboardCheck,
+      },
+      {
+        id: 'cashbook',
+        route: '/store/cash',
+        label: '3. Money In/Out',
+        shortLabel: 'Cash',
+        title: 'Naira Cashbook (Inflows & Shop Expenses)',
+        subtitle: 'Track every Naira entering or leaving your store across Cash, Moniepoint/OPay POS, and Bank Transfers.',
+        icon: Wallet,
+      },
+      {
+        id: 'history',
+        route: '/store/history',
+        label: '4. Check History',
+        shortLabel: 'History',
+        title: 'Complete Store Activity & Movement Ledger',
+        subtitle: 'Audit every past counter sale, market restock, physical shelf count, and damaged item record.',
+        icon: History,
+      },
       {
         id: 'debtors',
+        route: '/store/debtors',
         label: `5. Debtors (${dashboard.active_debtors_count || 0})`,
         shortLabel: 'Debtors',
+        title: 'Customer Credit Book & Debt Recovery',
+        subtitle: 'Send 1-click WhatsApp balance reminders and record customer debt repayments directly into your Cashbook.',
         icon: Users,
       },
-      { id: 'analytics', label: '6. POS vs Cash', shortLabel: 'Summary', icon: BarChart3 },
-    ];
-    if (currentUser?.role === 'ADMIN') {
-      base.push({
-        id: 'admin',
-        label: '7. Admin Control',
-        shortLabel: 'Admin',
-        icon: ShieldCheck,
+      {
+        id: 'analytics',
+        route: '/store/summary',
+        label: '6. POS vs Cash',
+        shortLabel: 'Summary',
+        title: 'POS vs Cash Drawer Reconciliation & Category Capital',
+        subtitle: 'Compare physical Naira in your drawer against POS/Transfer balances and inspect capital by category.',
+        icon: BarChart3,
+      },
+    ],
+    [dashboard.active_debtors_count]
+  );
+
+  const currentPageMeta = useMemo(
+    () => navItems.find((item) => item.id === activeTab) || navItems[0],
+    [navItems, activeTab]
+  );
+
+  const handleAuthenticatedUser = useCallback(
+    (user) => {
+      setCurrentUser(user);
+      setProfileForm({
+        full_name: user.full_name || '',
+        business_name: user.business_name || '',
+        phone: user.phone || '',
+        location: user.location || 'Lagos, Nigeria',
       });
-    }
-    return base;
-  }, [dashboard.active_debtors_count, currentUser?.role]);
+      if (user.role === 'ADMIN') {
+        showSuccessToast(`Welcome back, ${user.full_name} (Super Admin)!`);
+        navigate('/admin');
+      } else if (user.status !== 'APPROVED') {
+        navigate('/pending');
+      } else {
+        showSuccessToast(`Welcome to ${user.business_name}!`);
+        navigate('/store/sell');
+      }
+    },
+    [navigate, showSuccessToast]
+  );
 
   // 1. Loading Session State
   if (authChecking) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="liquid-glass rounded-3xl px-8 py-6 text-center space-y-2">
-          <div className="w-10 h-10 mx-auto rounded-2xl liquid-btn-primary flex items-center justify-center animate-pulse">
+          <div className="w-10 h-10 mx-auto rounded-2xl liquid-btn-gold flex items-center justify-center animate-pulse">
             <Package className="w-5 h-5" />
           </div>
           <p className="text-xs font-bold text-theme-secondary">
-            Loading StockFlow Lagos Workspace...
+            Loading StockFlow Lagos Sovereign Suite...
           </p>
         </div>
       </div>
     );
   }
 
-  // 2. Unauthenticated -> Render Production Sign In / Sign Up / Google & Apple OAuth Screen
+  // 2. Unauthenticated -> Render Dedicated Standalone /signup Page OR Dedicated Standalone /login Page
   if (!currentUser) {
+    if (path === '/signup') {
+      return (
+        <SignupPage
+          darkMode={darkMode}
+          setDarkMode={setDarkMode}
+          onAuthenticated={handleAuthenticatedUser}
+          onNavigate={navigate}
+        />
+      );
+    }
     return (
-      <AuthScreen
+      <LoginPage
         darkMode={darkMode}
         setDarkMode={setDarkMode}
-        onAuthenticated={(user) => {
-          setCurrentUser(user);
-          setProfileForm({
-            full_name: user.full_name || '',
-            business_name: user.business_name || '',
-            phone: user.phone || '',
-            location: user.location || 'Lagos, Nigeria',
-          });
-          if (user.role === 'ADMIN') {
-            showSuccessToast(`Welcome back, ${user.full_name} (Super Admin)!`);
-          } else {
-            showSuccessToast(`Welcome to ${user.business_name}!`);
-          }
-        }}
+        onAuthenticated={handleAuthenticatedUser}
+        onNavigate={navigate}
       />
     );
   }
 
-  // 3. Pending Approval / Suspended / Rejected -> Render Account Governance Screen
+  // 3. Pending Approval / Suspended / Rejected -> Render Dedicated Standalone Account Governance Page (/pending)
   if (currentUser.status !== 'APPROVED' && currentUser.role !== 'ADMIN') {
     return (
       <AccountStatusScreen
         user={currentUser}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
-        onUserUpdated={setCurrentUser}
+        onUserUpdated={(updated) => {
+          setCurrentUser(updated);
+          if (updated.status === 'APPROVED') {
+            navigate('/store/sell');
+          }
+        }}
         onLogout={handleLogout}
+      />
+    );
+  }
+
+  // 4. Dedicated Standalone Executive Admin Governance Page (/admin)
+  if (currentUser.role === 'ADMIN' && (path === '/admin' || path.startsWith('/admin/'))) {
+    return (
+      <AdminPage
+        currentUser={currentUser}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        onNavigate={navigate}
+        onLogout={handleLogout}
+        toast={toast}
+        onToast={showSuccessToast}
       />
     );
   }
@@ -833,24 +954,18 @@ export default function App() {
       <header className="liquid-glass-header text-stone-100 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div
-              style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.4)' }}
-              className="p-2 bg-sky-400/20 text-sky-200 rounded-2xl border border-white/25 backdrop-blur-md shrink-0"
-            >
+            <div className="p-2 rounded-2xl liquid-btn-gold shrink-0">
               <Package className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1
-                  style={{ color: '#f8f6f0' }}
+                  style={{ color: '#f8f4ec' }}
                   className="text-base sm:text-xl font-extrabold font-luxury tracking-tight truncate"
                 >
                   {currentUser.business_name || 'StockFlow Lagos'}
                 </h1>
-                <span
-                  style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.25)' }}
-                  className="hidden xs:inline-block text-[10px] sm:text-[11px] bg-white/12 text-sky-100 border border-white/20 px-2.5 py-0.5 rounded-full font-bold backdrop-blur-xs"
-                >
+                <span className="hidden xs:inline-block text-[10px] sm:text-[11px] bg-amber-400/20 text-amber-200 border border-amber-300/35 px-2.5 py-0.5 rounded-full font-extrabold">
                   {currentUser.role === 'ADMIN' ? 'Super Admin • ₦' : 'Verified Store • ₦'}
                 </span>
               </div>
@@ -861,22 +976,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Admin Control Center Quick Switcher (For Admin Users) */}
+            {/* Navigate to Dedicated Standalone /admin Page (For Admin Users) */}
             {currentUser.role === 'ADMIN' && (
               <button
                 type="button"
-                onClick={() =>
-                  handleSelectTab(activeTab === 'admin' ? 'counter' : 'admin', true)
-                }
-                style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.28)' }}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-extrabold border backdrop-blur-md cursor-pointer ${
-                  activeTab === 'admin'
-                    ? 'bg-amber-400/25 text-amber-200 border-amber-300/40'
-                    : 'bg-white/15 hover:bg-white/25 text-sky-100 border-white/25'
-                }`}
+                onClick={() => navigate('/admin')}
+                className="liquid-btn-gold flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-extrabold cursor-pointer"
               >
-                <ShieldCheck className="w-4 h-4 text-amber-300" />
-                <span>{activeTab === 'admin' ? 'Back to Store' : 'Admin Console'}</span>
+                <ShieldCheck className="w-4 h-4" />
+                <span>Admin Portal (/admin)</span>
               </button>
             )}
 
@@ -884,7 +992,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setDarkMode(!darkMode)}
-              title={darkMode ? 'Switch to Warm Light Mode' : 'Switch to Warm Dark Mode'}
+              title={darkMode ? 'Switch to Warm Ivory Mode' : 'Switch to Royal Obsidian Mode'}
               aria-label="Toggle color theme"
               style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
               className="flex items-center gap-1.5 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
@@ -892,12 +1000,12 @@ export default function App() {
               {darkMode ? (
                 <>
                   <Sun className="w-4 h-4 text-amber-300" />
-                  <span className="hidden lg:inline">Light</span>
+                  <span className="hidden lg:inline">Ivory</span>
                 </>
               ) : (
                 <>
-                  <Moon className="w-4 h-4 text-sky-200" />
-                  <span className="hidden lg:inline">Dark</span>
+                  <Moon className="w-4 h-4 text-amber-200" />
+                  <span className="hidden lg:inline">Obsidian</span>
                 </>
               )}
             </button>
@@ -935,7 +1043,7 @@ export default function App() {
               style={{ boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.22)' }}
               className="flex items-center gap-1 bg-white/12 hover:bg-white/20 text-stone-100 border border-white/25 px-2.5 py-2 rounded-xl text-xs font-bold backdrop-blur-md cursor-pointer"
             >
-              <Settings className="w-4 h-4 text-sky-200" />
+              <Settings className="w-4 h-4 text-amber-200" />
               <span className="hidden md:inline">Account</span>
             </button>
 
@@ -957,7 +1065,7 @@ export default function App() {
         {/* Toast Alert */}
         {toast && (
           <div className="liquid-btn-primary px-4 py-3 rounded-2xl text-sm font-semibold flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-sky-200 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-amber-200 shrink-0" />
             <span>{toast}</span>
           </div>
         )}
@@ -1045,7 +1153,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowRestockModal(true)}
-                className="text-theme-brand font-extrabold underline cursor-pointer"
+                className="text-theme-gold font-extrabold underline cursor-pointer"
               >
                 Generate Market Buying List →
               </button>
@@ -1053,17 +1161,13 @@ export default function App() {
           />
         </section>
 
-        {/* Responsive Liquid Glass Tab Navigation Bar (Visible on ALL Devices) */}
+        {/* Responsive Store Page Route Navigation Bar (3x2 Grid on Mobile, Pill Row on Desktop) */}
         <div
           ref={tabSectionRef}
           style={{ scrollMarginTop: '4.5rem' }}
           className="liquid-glass p-1.5 rounded-2xl"
         >
-          <div
-            className={`grid ${
-              navItems.length > 6 ? 'grid-cols-4 sm:grid-cols-7' : 'grid-cols-3'
-            } md:flex gap-1.5 w-full`}
-          >
+          <div className="grid grid-cols-3 md:flex gap-1.5 w-full">
             {navItems.map((t) => {
               const Icon = t.icon;
               const isActive = activeTab === t.id;
@@ -1087,10 +1191,20 @@ export default function App() {
           </div>
         </div>
 
-        {/* TAB 7: ADMIN CONTROL CENTER (APPROVE, CONTROL, SORT & MANAGE USERS) */}
-        {activeTab === 'admin' && currentUser.role === 'ADMIN' && (
-          <AdminConsole currentUser={currentUser} onToast={showSuccessToast} />
-        )}
+        {/* Dedicated Page Identity Header (Shows Current Standalone Store Route & Purpose) */}
+        <div className="liquid-glass-subtle px-4 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm sm:text-base font-extrabold font-luxury text-theme-primary">
+                {currentPageMeta.title}
+              </h2>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full liquid-glass text-theme-gold">
+                Page Route: {currentPageMeta.route}
+              </span>
+            </div>
+            <p className="text-xs text-theme-secondary mt-0.5">{currentPageMeta.subtitle}</p>
+          </div>
+        </div>
 
         {/* TAB 1: QUICK SELL (SHOP COUNTER) */}
         {activeTab === 'counter' && (
