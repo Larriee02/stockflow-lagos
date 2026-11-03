@@ -713,6 +713,12 @@ async function executeQuery(text, params = []) {
     return { rows: prod ? [prod] : [], rowCount: prod ? 1 : 0 };
   }
 
+  if (upper.startsWith('SELECT * FROM PRODUCTS WHERE ID = $1')) {
+    const [id] = params;
+    const prod = state.products.find((p) => Number(p.id) === Number(id));
+    return { rows: prod ? [prod] : [], rowCount: prod ? 1 : 0 };
+  }
+
   if (upper.startsWith('SELECT * FROM PRODUCTS')) {
     const uid = Number(params[0]);
     const list = state.products
@@ -769,7 +775,9 @@ async function executeQuery(text, params = []) {
     ] = params;
     if (
       state.products.some(
-        (p) => Number(p.user_id) === Number(user_id) && p.sku.toUpperCase() === String(sku).toUpperCase()
+        (p) =>
+          Number(p.user_id) === Number(user_id) &&
+          String(p.sku || '').toUpperCase() === String(sku || '').toUpperCase()
       )
     ) {
       const err = new Error('Duplicate SKU');
@@ -1156,5 +1164,18 @@ async function executeQuery(text, params = []) {
 
 module.exports = {
   query: executeQuery,
-  withTransaction: async (fn) => fn({ query: executeQuery }),
+  withTransaction: async (fn) => {
+    const currentState = loadState();
+    // Deep clone state snapshot before running transaction to guarantee atomicity & rollbacks
+    const snapshot = JSON.parse(JSON.stringify(currentState));
+    try {
+      const result = await fn({ query: executeQuery });
+      return result;
+    } catch (err) {
+      // Revert completely to snapshot on error (clean rollback)
+      memoryState = snapshot;
+      saveState(snapshot);
+      throw err;
+    }
+  },
 };

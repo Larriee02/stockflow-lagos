@@ -38,6 +38,9 @@ import { StatCard } from './components/ui/StatCard';
 import { Badge } from './components/ui/Badge';
 import { EmptyState } from './components/ui/EmptyState';
 import { ToastProvider, useToast } from './components/ui/Toast';
+import { ReceiptModal } from './components/receipt/ReceiptModal';
+import { CheckoutConfirmModal } from './components/counter/CheckoutConfirmModal';
+import { MobileCartSheet } from './components/counter/MobileCartSheet';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
@@ -233,7 +236,9 @@ function AppShell() {
     note: '',
   });
   const [cashForm, setCashForm] = useState(INITIAL_CASH_FORM);
-  const { success: toastSuccess } = useToast();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
 
   const showSuccessToast = useCallback((msg) => {
     setToast(msg);
@@ -472,38 +477,82 @@ function AppShell() {
   const addToCart = (product) => {
     const currentInCart = Number(cart[product.id] || 0);
     const available = Number(product.stock_quantity);
+    if (available <= 0) {
+      toastWarning?.(`"${product.name}" is currently out of stock.`);
+      return;
+    }
     if (currentInCart + 1 > available) {
-      return alert(`Only ${available} ${product.unit} of "${product.name}" left on the shelf!`);
+      toastWarning?.(`Only ${available} ${product.unit} of "${product.name}" available in stock!`);
+      return;
     }
     setCart((prev) => ({ ...prev, [product.id]: currentInCart + 1 }));
   };
 
+  const removeFromCart = (productId) => {
+    setCart((prev) => {
+      const copy = { ...prev };
+      delete copy[productId];
+      return copy;
+    });
+  };
+
+  const clearCart = () => {
+    setCart({});
+    setIsPartPayment(false);
+    setAmountPaidNow('');
+  };
+
   const updateCartQty = (productId, delta, maxStock) => {
     setCart((prev) => {
-      const next = (prev[productId] || 0) + delta;
+      const current = prev[productId] || 0;
+      const next = current + delta;
       if (next <= 0) {
         const copy = { ...prev };
         delete copy[productId];
         return copy;
       }
-      if (next > maxStock) return prev;
+      if (next > maxStock) {
+        toastWarning?.(`Cannot exceed available shelf stock of ${maxStock}!`);
+        return prev;
+      }
       return { ...prev, [productId]: next };
     });
   };
 
-  // Complete Quick Counter Sale + Generate Instant Digital Receipt
-  const handleQuickCheckout = async (e) => {
-    e.preventDefault();
-    if (cartItems.length === 0) return;
+  // Step 1: Validate and open the confirmation step
+  const handleInitiateCheckout = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (cartItems.length === 0) {
+      toastWarning?.('Your customer basket is empty. Tap products to add them.');
+      return;
+    }
 
     const paid = isPartPayment ? Number(amountPaidNow || 0) : cartTotal;
     const balance = cartTotal - paid;
 
     if (balance > 0 && !customerName.trim()) {
-      return alert(
-        'Please enter the Customer Name so we can save their balance in the Credit Book.'
-      );
+      toastError?.('Please enter Customer Name to record the unpaid balance in the Credit Book.');
+      return;
     }
+
+    // Verify available stock for all items
+    for (const item of cartItems) {
+      const available = Number(item.product.stock_quantity);
+      if (item.quantity > available) {
+        toastError?.(`Insufficient stock for "${item.product.name}"! Only ${available} available on shelf.`);
+        return;
+      }
+    }
+
+    setIsConfirmModalOpen(true);
+  };
+
+  // Step 2: Atomic Checkout execution (with rollback on error & state preservation)
+  const handleConfirmCheckout = async () => {
+    if (cartItems.length === 0) return;
+
+    const paid = isPartPayment ? Number(amountPaidNow || 0) : cartTotal;
+    const balance = Math.max(0, cartTotal - paid);
 
     const receiptItemsSnapshot = cartItems.map((i) => ({
       name: i.product.name,
@@ -529,7 +578,7 @@ function AppShell() {
         }),
       });
 
-      // Build Instant Digital Receipt
+      // Build and open Instant Digital Receipt
       setLastReceipt({
         receiptNo: `SFL-${Date.now().toString().slice(-6)}`,
         timestamp: new Date().toLocaleString(),
@@ -542,25 +591,57 @@ function AppShell() {
         items: receiptItemsSnapshot,
         totalBill: cartTotal,
         amountPaid: paid,
-        balanceDue: Math.max(0, balance),
+        balanceDue: balance,
       });
 
+      // Transaction successfully committed: reset cart and close modals
       setCart({});
       setIsPartPayment(false);
       setAmountPaidNow('');
       setCustomerName('');
       setCustomerPhone('');
+      setIsConfirmModalOpen(false);
+      setIsMobileCartOpen(false);
+
       showSuccessToast(
         balance > 0
           ? `Sale saved! ${formatNaira(paid)} received, ${formatNaira(balance)} added to Credit Book.`
-          : `Sale completed! ${formatNaira(cartTotal)} recorded in ${PAYMENT_CHANNEL_LABELS[checkoutMethod]}.`
+          : `Sale completed! ${formatNaira(cartTotal)} recorded in ${PAYMENT_CHANNEL_LABELS[checkoutMethod] || checkoutMethod}.`
       );
       fetchAllData();
     } catch (err) {
-      alert(err.message);
+      // NOTE: Cart and form inputs are intentionally NOT wiped on failure,
+      // allowing the cashier to adjust quantities and retry!
+      setIsConfirmModalOpen(false);
+      toastError?.(err.message || 'Checkout failed. Your cart was preserved.');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const openReceiptForMovement = (m) => {
+    setLastReceipt({
+      receiptNo: `SFL-${String(m.id).padStart(6, '0')}`,
+      timestamp: new Date(m.created_at).toLocaleString(),
+      businessName: currentUser?.business_name || 'StockFlow Lagos Store',
+      location: currentUser?.location || 'Lagos, Nigeria',
+      cashierName: currentUser?.full_name || 'Store Owner',
+      customerName: m.counterparty_name || 'Walk-in Customer',
+      customerPhone: '',
+      paymentMethod: 'CASH',
+      items: [
+        {
+          name: m.product_name,
+          unit: m.unit,
+          quantity: Math.abs(Number(m.quantity_change)),
+          unitPrice: Number(m.unit_price || 0),
+          lineTotal: Number(m.total_value || 0),
+        },
+      ],
+      totalBill: Number(m.total_value || 0),
+      amountPaid: Number(m.total_value || 0),
+      balanceDue: 0,
+    });
   };
 
   // Expected value inside Stock Movement modal
@@ -1309,13 +1390,24 @@ function AppShell() {
                           <div className="font-extrabold font-luxury text-sm leading-snug break-words text-theme-primary">
                             {p.name}
                           </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs">
                             <span className="font-extrabold tabular-nums text-theme-brand">
                               {formatNaira(p.selling_price)} / {p.unit}
                             </span>
-                            <Badge variant={isLow ? 'warning' : 'neutral'}>
-                              {stock} {p.unit} left
+                            <Badge
+                              variant={
+                                stock <= 0 ? 'danger' : isLow ? 'warning' : 'success'
+                              }
+                            >
+                              {stock <= 0
+                                ? 'Out of Stock (0)'
+                                : `Available: ${stock} ${p.unit}`}
                             </Badge>
+                            {inBasket > 0 && (
+                              <Badge variant="info">
+                                In Cart: {inBasket} ({stock - inBasket} left)
+                              </Badge>
+                            )}
                           </div>
                         </div>
 
@@ -1404,50 +1496,90 @@ function AppShell() {
                   </p>
                 </div>
               ) : (
-                <form onSubmit={handleQuickCheckout} className="space-y-4">
+                <form onSubmit={handleInitiateCheckout} className="space-y-4">
                   <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                    {cartItems.map(({ product, quantity, lineTotal }) => (
-                      <div
-                        key={product.id}
-                        className="liquid-glass-subtle flex items-center justify-between gap-2 p-2.5 rounded-2xl"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-bold truncate text-theme-primary">
-                            {product.name}
-                          </div>
-                          <div className="text-[11px] tabular-nums text-theme-secondary">
-                            {formatNaira(product.selling_price)} × {quantity} {product.unit} ={' '}
-                            <strong className="text-theme-primary">
-                              {formatNaira(lineTotal)}
-                            </strong>
-                          </div>
-                        </div>
+                    {cartItems.map(({ product, quantity, lineTotal }) => {
+                      const stock = Number(product.stock_quantity);
+                      const remaining = stock - quantity;
+                      const isAtMax = quantity >= stock;
 
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateCartQty(product.id, -1, Number(product.stock_quantity))
-                            }
-                            className="liquid-input p-1.5 rounded-xl hover:opacity-80 cursor-pointer"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <span className="text-xs font-extrabold tabular-nums w-6 text-center text-theme-primary">
-                            {quantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateCartQty(product.id, 1, Number(product.stock_quantity))
-                            }
-                            className="liquid-input p-1.5 rounded-xl hover:opacity-80 cursor-pointer"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
+                      return (
+                        <div
+                          key={product.id}
+                          className="liquid-glass-subtle p-3 rounded-2xl space-y-1.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold truncate text-theme-primary">
+                                {product.name}
+                              </div>
+                              <div className="text-[11px] tabular-nums text-theme-secondary">
+                                {formatNaira(product.selling_price)} × {quantity} {product.unit} ={' '}
+                                <strong className="text-theme-primary">
+                                  {formatNaira(lineTotal)}
+                                </strong>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeFromCart(product.id)}
+                              className="text-slate-400 hover:text-rose-500 cursor-pointer p-0.5"
+                              title="Remove item from basket"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Live Available Stock Indicator */}
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-theme-secondary">
+                              Available Stock: <strong className="text-theme-primary">{stock} {product.unit}</strong>
+                            </span>
+                            <span
+                              className={
+                                remaining <= Number(product.reorder_level)
+                                  ? 'text-amber-500 font-bold'
+                                  : 'text-emerald-500 font-bold'
+                              }
+                            >
+                              {remaining} left after sale
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1 border-t theme-divider">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateCartQty(product.id, -1, stock)
+                                }
+                                className="liquid-input p-1.5 rounded-xl hover:opacity-80 cursor-pointer"
+                              >
+                                <Minus className="w-3.5 h-3.5" />
+                              </button>
+                              <span className="text-xs font-extrabold tabular-nums w-6 text-center text-theme-primary">
+                                {quantity}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={isAtMax}
+                                onClick={() =>
+                                  updateCartQty(product.id, 1, stock)
+                                }
+                                className="liquid-input p-1.5 rounded-xl hover:opacity-80 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={isAtMax ? 'Maximum available shelf stock in basket' : 'Add another unit'}
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <span className="text-xs font-black font-luxury text-theme-primary tabular-nums">
+                              {formatNaira(lineTotal)}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Total Bill Banner */}
@@ -1550,8 +1682,8 @@ function AppShell() {
                     className="liquid-btn-primary w-full py-3.5 rounded-2xl font-bold text-sm disabled:opacity-50 cursor-pointer"
                   >
                     {submitting
-                      ? 'Recording Sale...'
-                      : `Complete Sale & Issue Receipt (${formatNaira(cartTotal)})`}
+                      ? 'Processing Sale...'
+                      : `Review & Complete Sale (${formatNaira(cartTotal)})`}
                   </button>
                 </form>
               )}
@@ -2221,11 +2353,22 @@ function AppShell() {
                             After: {Number(m.new_stock)}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-[11px] text-theme-secondary">
+                        <div className="flex items-center justify-between text-[11px] text-theme-secondary pt-1 border-t theme-divider">
                           <span>
                             {m.counterparty_name || m.note || 'Walk-in / Shop Log'}
                           </span>
-                          <span>{new Date(m.created_at).toLocaleString()}</span>
+                          <div className="flex items-center gap-2">
+                            <span>{new Date(m.created_at).toLocaleDateString()}</span>
+                            {m.movement_type === 'SALE' && (
+                              <button
+                                type="button"
+                                onClick={() => openReceiptForMovement(m)}
+                                className="font-bold text-theme-brand hover:underline flex items-center gap-1 cursor-pointer"
+                              >
+                                <FileText className="w-3.5 h-3.5" /> Receipt
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -2308,13 +2451,27 @@ function AppShell() {
                               {formatNaira(m.total_value)}
                             </td>
                             <td className="py-3.5 px-4 text-xs text-theme-secondary">
-                              {m.counterparty_name ? (
-                                <strong className="text-theme-primary">
-                                  {m.counterparty_name}
-                                </strong>
-                              ) : null}
-                              {m.counterparty_name && m.note ? ' — ' : ''}
-                              {m.note || (!m.counterparty_name ? '—' : '')}
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  {m.counterparty_name ? (
+                                    <strong className="text-theme-primary">
+                                      {m.counterparty_name}
+                                    </strong>
+                                  ) : null}
+                                  {m.counterparty_name && m.note ? ' — ' : ''}
+                                  {m.note || (!m.counterparty_name ? '—' : '')}
+                                </div>
+                                {m.movement_type === 'SALE' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openReceiptForMovement(m)}
+                                    className="liquid-glass-subtle px-2.5 py-1 rounded-lg text-[11px] font-bold text-theme-brand hover:opacity-80 flex items-center gap-1 cursor-pointer shrink-0"
+                                    title="View & Print Sales Receipt"
+                                  >
+                                    <FileText className="w-3 h-3" /> Slip
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -2614,25 +2771,33 @@ function AppShell() {
         )}
       </main>
 
-      {/* FLOATING MOBILE BASKET BAR */}
+      {/* FLOATING MOBILE BASKET REVIEW & CHECKOUT BAR */}
       {activeTab === 'counter' && cartItems.length > 0 && (
         <div className="lg:hidden fixed bottom-16 left-3 right-3 z-30">
           <button
             type="button"
-            onClick={() =>
-              basketRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }
-            className="liquid-glass-header w-full text-white px-4 py-3.5 rounded-2xl shadow-2xl border border-white/25 flex items-center justify-between"
+            onClick={() => setIsMobileCartOpen(true)}
+            className="liquid-glass-header w-full text-white px-4 py-3.5 rounded-2xl shadow-2xl border border-white/25 flex items-center justify-between active:scale-[0.99] transition cursor-pointer"
           >
             <div className="flex items-center gap-2">
-              <ShoppingCart className="w-4 h-4 text-sky-300" />
-              <span className="text-xs font-bold">
-                {cartItemCount} item(s) in Basket
+              <div className="relative">
+                <ShoppingCart className="w-5 h-5 text-sky-300" />
+                <span className="absolute -top-1.5 -right-2 bg-rose-500 text-white rounded-full text-[10px] font-black w-4 h-4 flex items-center justify-center">
+                  {cartItemCount}
+                </span>
+              </div>
+              <span className="text-xs font-bold pl-1">
+                Review Basket ({cartItemCount} items)
               </span>
             </div>
-            <span className="text-sm font-extrabold font-luxury tabular-nums text-sky-200">
-              {formatNaira(cartTotal)} — Checkout ↓
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-black font-luxury tabular-nums text-sky-200">
+                {formatNaira(cartTotal)}
+              </span>
+              <span className="text-xs bg-sky-500/30 text-sky-100 px-2.5 py-1 rounded-xl font-bold">
+                Review & Pay →
+              </span>
+            </div>
           </button>
         </div>
       )}
@@ -3186,116 +3351,56 @@ function AppShell() {
         </form>
       </Modal>
 
-      {/* DISCRETIONARY MVP MODAL 5: INSTANT DIGITAL SALE RECEIPT (WHATSAPP & PRINT) */}
-      <Modal
+      {/* INSTANT DIGITAL SALE RECEIPT (PRINTABLE THERMAL SLIP & WHATSAPP / SHARE) */}
+      <ReceiptModal
         isOpen={Boolean(lastReceipt)}
         onClose={() => setLastReceipt(null)}
-        title={`Sale Receipt #${lastReceipt?.receiptNo || ''}`}
-        subtitle={`${lastReceipt?.businessName || ''} • ${lastReceipt?.timestamp || ''}`}
-      >
-        {lastReceipt && (
-          <div className="space-y-4">
-            <div className="liquid-glass-subtle p-4 rounded-2xl space-y-3 border">
-              <div className="flex items-center justify-between text-xs border-b pb-2 theme-divider">
-                <div>
-                  <div className="font-extrabold font-luxury text-sm text-theme-primary">
-                    {lastReceipt.businessName}
-                  </div>
-                  <div className="text-[11px] text-theme-secondary">
-                    {lastReceipt.location} • Served by {lastReceipt.cashierName}
-                  </div>
-                </div>
-                <Badge variant={lastReceipt.balanceDue > 0 ? 'warning' : 'success'}>
-                  {lastReceipt.balanceDue > 0 ? 'PART / CREDIT' : 'PAID IN FULL'}
-                </Badge>
-              </div>
+        receipt={lastReceipt}
+        formatNaira={formatNaira}
+      />
 
-              <div className="space-y-1.5 max-h-52 overflow-y-auto">
-                {lastReceipt.items.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between text-xs tabular-nums"
-                  >
-                    <span className="text-theme-primary font-semibold">
-                      {item.quantity} {item.unit} × {item.name}
-                    </span>
-                    <span className="font-bold text-theme-primary">
-                      {formatNaira(item.lineTotal)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+      {/* CHECKOUT CONFIRMATION STEP (PREVENTS ACCIDENTAL CHECKOUT & VERIFIES STOCK) */}
+      <CheckoutConfirmModal
+        isOpen={isConfirmModalOpen}
+        onClose={() => setIsConfirmModalOpen(false)}
+        onConfirm={handleConfirmCheckout}
+        isSubmitting={submitting}
+        cartItems={cartItems}
+        cartTotal={cartTotal}
+        paymentMethod={checkoutMethod}
+        isPartPayment={isPartPayment}
+        amountPaidNow={amountPaidNow}
+        customerName={customerName}
+        customerPhone={customerPhone}
+        formatNaira={formatNaira}
+      />
 
-              <div className="border-t pt-2.5 theme-divider space-y-1 text-xs tabular-nums">
-                <div className="flex justify-between font-bold text-theme-primary">
-                  <span>Total Customer Bill</span>
-                  <span>{formatNaira(lastReceipt.totalBill)}</span>
-                </div>
-                <div className="flex justify-between text-theme-inflow font-bold">
-                  <span>
-                    Paid ({PAYMENT_CHANNEL_LABELS[lastReceipt.paymentMethod] || lastReceipt.paymentMethod})
-                  </span>
-                  <span>{formatNaira(lastReceipt.amountPaid)}</span>
-                </div>
-                {lastReceipt.balanceDue > 0 && (
-                  <div className="flex justify-between text-theme-outflow font-extrabold">
-                    <span>Balance Owing ({lastReceipt.customerName})</span>
-                    <span>{formatNaira(lastReceipt.balanceDue)}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const lines = [
-                    `*${lastReceipt.businessName}*`,
-                    `Receipt: ${lastReceipt.receiptNo}`,
-                    `Date: ${lastReceipt.timestamp}`,
-                    `------------------------`,
-                    ...lastReceipt.items.map(
-                      (i) => `${i.quantity} ${i.unit} x ${i.name} = ${formatNaira(i.lineTotal)}`
-                    ),
-                    `------------------------`,
-                    `*Total Bill:* ${formatNaira(lastReceipt.totalBill)}`,
-                    `*Amount Paid:* ${formatNaira(lastReceipt.amountPaid)} (${lastReceipt.paymentMethod})`,
-                    lastReceipt.balanceDue > 0
-                      ? `*Balance Owing:* ${formatNaira(lastReceipt.balanceDue)}`
-                      : `Status: PAID IN FULL`,
-                    `Thank you for your patronage!`,
-                  ].join('\n');
-                  const cleanPhone = (lastReceipt.customerPhone || '')
-                    .replace(/\D/g, '')
-                    .replace(/^0/, '234');
-                  const url = cleanPhone
-                    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(lines)}`
-                    : `https://wa.me/?text=${encodeURIComponent(lines)}`;
-                  window.open(url, '_blank', 'noopener,noreferrer');
-                }}
-                className="liquid-glass-subtle px-3.5 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 text-theme-inflow cursor-pointer"
-              >
-                <MessageCircle className="w-4 h-4" /> Share on WhatsApp
-              </button>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="liquid-glass-subtle px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 text-theme-primary cursor-pointer"
-              >
-                <Printer className="w-4 h-4" /> Print Receipt
-              </button>
-              <button
-                type="button"
-                onClick={() => setLastReceipt(null)}
-                className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-extrabold cursor-pointer"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* MOBILE CART REVIEW & CHECKOUT SHEET (< 1024px) */}
+      <MobileCartSheet
+        isOpen={isMobileCartOpen}
+        onClose={() => setIsMobileCartOpen(false)}
+        cartItems={cartItems}
+        cartTotal={cartTotal}
+        cartItemCount={cartItemCount}
+        updateCartQty={updateCartQty}
+        removeFromCart={removeFromCart}
+        clearCart={clearCart}
+        checkoutMethod={checkoutMethod}
+        setCheckoutMethod={setCheckoutMethod}
+        isPartPayment={isPartPayment}
+        setIsPartPayment={setIsPartPayment}
+        amountPaidNow={amountPaidNow}
+        setAmountPaidNow={setAmountPaidNow}
+        customerName={customerName}
+        setCustomerName={setCustomerName}
+        customerPhone={customerPhone}
+        setCustomerPhone={setCustomerPhone}
+        onProceedCheckout={() => {
+          setIsMobileCartOpen(false);
+          handleInitiateCheckout();
+        }}
+        formatNaira={formatNaira}
+      />
 
       {/* DISCRETIONARY MVP MODAL 6: SMART MARKET RESTOCK BUYING LIST GENERATOR */}
       <Modal
