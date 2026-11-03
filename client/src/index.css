@@ -6,125 +6,127 @@
 :root {
   color-scheme: light;
 
-  /* LIGHT MODE: Cool Arctic Slate, Electric Cobalt & Crisp Cyan-Teal */
-  --bg-app: #f4f7fb;
+  /* LIGHT MODE: Harmonized with Gradient Lab Palette
+     [#1a2a4a, #3a5a8a, #8aa8d0, #d0dcf0, #f4f7fc] */
+  --bg-app: #f4f7fc;
   --bg-mesh:
-    radial-gradient(at 10% 8%, rgba(37, 99, 235, 0.11) 0px, transparent 48%),
-    radial-gradient(at 88% 12%, rgba(14, 165, 233, 0.10) 0px, transparent 50%),
-    radial-gradient(at 50% 92%, rgba(16, 185, 129, 0.07) 0px, transparent 55%),
-    linear-gradient(180deg, #f8fafc 0%, #eef2f8 100%);
+    radial-gradient(at 12% 10%, rgba(26, 42, 74, 0.14) 0px, transparent 50%),
+    radial-gradient(at 88% 15%, rgba(58, 90, 138, 0.16) 0px, transparent 52%),
+    radial-gradient(at 50% 90%, rgba(138, 168, 208, 0.25) 0px, transparent 58%),
+    linear-gradient(180deg, #f4f7fc 0%, #d0dcf0 100%);
 
-  --bg-card: rgba(255, 255, 255, 0.86);
-  --bg-card-elevated: rgba(255, 255, 255, 0.95);
-  --bg-subtle: rgba(241, 245, 249, 0.85);
-  --bg-input: rgba(255, 255, 255, 0.94);
-  --bg-option: #ffffff;
-  --bg-header: rgba(15, 23, 42, 0.94);
+  --bg-card: rgba(244, 247, 252, 0.78);
+  --bg-card-elevated: rgba(255, 255, 255, 0.90);
+  --bg-subtle: rgba(208, 220, 240, 0.50);
+  --bg-input: rgba(255, 255, 255, 0.90);
+  --bg-option: #f4f7fc;
+  --bg-header: rgba(26, 42, 74, 0.92);
 
-  --border-color: rgba(255, 255, 255, 0.95);
-  --border-outer: rgba(203, 213, 225, 0.72);
-  --divider-color: rgba(226, 232, 240, 0.85);
+  --border-color: rgba(255, 255, 255, 0.94);
+  --border-outer: rgba(138, 168, 208, 0.45);
+  --divider-color: rgba(138, 168, 208, 0.32);
 
   --glass-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.98),
-    0 14px 34px -10px rgba(15, 23, 42, 0.07),
-    0 4px 10px -2px rgba(15, 23, 42, 0.04);
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.96),
+    0 16px 38px -10px rgba(26, 42, 74, 0.12),
+    0 4px 12px -2px rgba(26, 42, 74, 0.06);
 
-  /* High-Contrast Cool Slate Typography (Light Mode) */
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  /* High-Contrast Oxford Navy & Steel Blue Typography (Light Mode) */
+  --text-primary: #14223d;
+  --text-secondary: #35517d;
+  --text-muted: #6882aa;
 
-  /* Modern Cool Cobalt & Cyan Accents (Light Mode) */
-  --brand-blue: #2563eb;
-  --brand-blue-hover: #1d4ed8;
-  --brand-blue-soft: rgba(37, 99, 235, 0.10);
-  --brand-blue-border: rgba(37, 99, 235, 0.26);
-  --brand-gradient: linear-gradient(135deg, #2563eb 0%, #0284c7 100%);
+  /* Gradient Lab Steel Ocean & Deep Navy Accents (Light Mode) */
+  --brand-blue: #2f4f80;
+  --brand-blue-hover: #1a2a4a;
+  --brand-blue-soft: rgba(58, 90, 138, 0.13);
+  --brand-blue-border: rgba(58, 90, 138, 0.32);
+  --brand-gradient: linear-gradient(135deg, #1a2a4a 0%, #3a5a8a 58%, #5278b0 100%);
 
-  --brand-gold: #0284c7;
-  --brand-gold-soft: rgba(2, 132, 199, 0.10);
-  --brand-gold-border: rgba(2, 132, 199, 0.26);
-  --gold-gradient: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
+  --brand-gold: #3a5a8a;
+  --brand-gold-soft: rgba(138, 168, 208, 0.22);
+  --brand-gold-border: rgba(58, 90, 138, 0.30);
+  --gold-gradient: linear-gradient(135deg, #3a5a8a 0%, #648bc4 100%);
 
   --color-inflow: #059669;
   --color-outflow: #e11d48;
   --color-warning: #d97706;
 
   /* Badge Surfaces & Text (Light Mode) */
-  --badge-info-bg: rgba(37, 99, 235, 0.10);
-  --badge-info-text: #1d4ed8;
-  --badge-info-border: rgba(37, 99, 235, 0.24);
+  --badge-info-bg: rgba(58, 90, 138, 0.13);
+  --badge-info-text: #1a2a4a;
+  --badge-info-border: rgba(58, 90, 138, 0.30);
 
-  --badge-success-bg: rgba(5, 150, 105, 0.11);
-  --badge-success-text: #047857;
-  --badge-success-border: rgba(5, 150, 105, 0.25);
+  --badge-success-bg: rgba(5, 150, 105, 0.12);
+  --badge-success-text: #065f46;
+  --badge-success-border: rgba(5, 150, 105, 0.28);
 
-  --badge-warning-bg: rgba(217, 119, 6, 0.12);
-  --badge-warning-text: #b45309;
-  --badge-warning-border: rgba(217, 119, 6, 0.28);
+  --badge-warning-bg: rgba(217, 119, 6, 0.13);
+  --badge-warning-text: #92400e;
+  --badge-warning-border: rgba(217, 119, 6, 0.30);
 
-  --badge-danger-bg: rgba(225, 29, 72, 0.11);
-  --badge-danger-text: #be123c;
-  --badge-danger-border: rgba(225, 29, 72, 0.25);
+  --badge-danger-bg: rgba(225, 29, 72, 0.12);
+  --badge-danger-text: #9f1239;
+  --badge-danger-border: rgba(225, 29, 72, 0.28);
 
-  --badge-neutral-bg: rgba(100, 116, 139, 0.11);
-  --badge-neutral-text: #334155;
-  --badge-neutral-border: rgba(100, 116, 139, 0.22);
+  --badge-neutral-bg: rgba(138, 168, 208, 0.22);
+  --badge-neutral-text: #1a2a4a;
+  --badge-neutral-border: rgba(138, 168, 208, 0.40);
 }
 
 .dark {
   color-scheme: dark;
 
-  /* DARK MODE: Cool Midnight Carbon-Slate, Luminous Sky-Cobalt & Mint-Emerald */
-  --bg-app: #0b1120;
+  /* DARK MODE: Nocturnal Abyssal Navy, Steel Cobalt & Luminous Periwinkle
+     [#050912, #0b1528, #13223e, #1a2a4a, #2c466f] + [#8aa8d0, #d0dcf0, #f4f7fc] */
+  --bg-app: #050912;
   --bg-mesh:
-    radial-gradient(at 12% 8%, rgba(56, 189, 248, 0.15) 0px, transparent 48%),
-    radial-gradient(at 88% 14%, rgba(59, 130, 246, 0.14) 0px, transparent 52%),
-    radial-gradient(at 50% 92%, rgba(16, 185, 129, 0.10) 0px, transparent 55%),
-    linear-gradient(180deg, #0f172a 0%, #090d16 100%);
+    radial-gradient(at 12% 10%, rgba(58, 90, 138, 0.25) 0px, transparent 50%),
+    radial-gradient(at 88% 15%, rgba(138, 168, 208, 0.16) 0px, transparent 52%),
+    radial-gradient(at 50% 90%, rgba(26, 42, 74, 0.38) 0px, transparent 58%),
+    linear-gradient(180deg, #0b1528 0%, #050912 100%);
 
-  --bg-card: rgba(15, 23, 42, 0.80);
-  --bg-card-elevated: rgba(30, 41, 59, 0.90);
-  --bg-subtle: rgba(30, 41, 59, 0.68);
-  --bg-input: rgba(15, 23, 42, 0.88);
-  --bg-option: #0f172a;
-  --bg-header: rgba(9, 14, 26, 0.92);
+  --bg-card: rgba(13, 23, 42, 0.74);
+  --bg-card-elevated: rgba(20, 34, 62, 0.86);
+  --bg-subtle: rgba(26, 42, 74, 0.56);
+  --bg-input: rgba(10, 18, 34, 0.86);
+  --bg-option: #0b1528;
+  --bg-header: rgba(6, 11, 22, 0.88);
 
-  --border-color: rgba(255, 255, 255, 0.10);
-  --border-outer: rgba(148, 163, 184, 0.18);
-  --divider-color: rgba(148, 163, 184, 0.14);
+  --border-color: rgba(208, 220, 240, 0.12);
+  --border-outer: rgba(138, 168, 208, 0.24);
+  --divider-color: rgba(138, 168, 208, 0.16);
 
   --glass-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.10),
-    0 20px 42px -12px rgba(0, 0, 0, 0.55),
-    0 4px 12px -2px rgba(0, 0, 0, 0.35);
+    inset 0 1px 0 0 rgba(208, 220, 240, 0.12),
+    0 22px 46px -12px rgba(2, 5, 12, 0.68),
+    0 4px 14px -2px rgba(2, 5, 12, 0.45);
 
-  /* High-Contrast Cool Slate Typography (Dark Mode) */
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  /* Polar Alabaster & Periwinkle Mist Typography (Dark Mode) */
+  --text-primary: #f4f7fc;
+  --text-secondary: #a8bfe0;
+  --text-muted: #6c88b0;
 
-  /* Modern Cool Cobalt & Sky Accents (Dark Mode) */
-  --brand-blue: #38bdf8;
-  --brand-blue-hover: #7dd3fc;
-  --brand-blue-soft: rgba(56, 189, 248, 0.15);
-  --brand-blue-border: rgba(56, 189, 248, 0.34);
-  --brand-gradient: linear-gradient(135deg, #2563eb 0%, #0284c7 100%);
+  /* Luminous Periwinkle & Steel Cobalt Accents (Dark Mode) */
+  --brand-blue: #8aa8d0;
+  --brand-blue-hover: #d0dcf0;
+  --brand-blue-soft: rgba(138, 168, 208, 0.16);
+  --brand-blue-border: rgba(138, 168, 208, 0.36);
+  --brand-gradient: linear-gradient(135deg, #243b66 0%, #3a5a8a 52%, #5b82b8 100%);
 
-  --brand-gold: #38bdf8;
-  --brand-gold-soft: rgba(56, 189, 248, 0.15);
-  --brand-gold-border: rgba(56, 189, 248, 0.34);
-  --gold-gradient: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
+  --brand-gold: #8aa8d0;
+  --brand-gold-soft: rgba(138, 168, 208, 0.16);
+  --brand-gold-border: rgba(138, 168, 208, 0.34);
+  --gold-gradient: linear-gradient(135deg, #3a5a8a 0%, #6890c8 100%);
 
   --color-inflow: #34d399;
   --color-outflow: #fb7185;
   --color-warning: #fbbf24;
 
   /* Badge Surfaces & Text (Dark Mode) */
-  --badge-info-bg: rgba(56, 189, 248, 0.18);
-  --badge-info-text: #bae6fd;
-  --badge-info-border: rgba(56, 189, 248, 0.34);
+  --badge-info-bg: rgba(58, 90, 138, 0.32);
+  --badge-info-text: #d0dcf0;
+  --badge-info-border: rgba(138, 168, 208, 0.40);
 
   --badge-success-bg: rgba(16, 185, 129, 0.18);
   --badge-success-text: #a7f3d0;
@@ -138,9 +140,9 @@
   --badge-danger-text: #fecdd3;
   --badge-danger-border: rgba(251, 113, 133, 0.34);
 
-  --badge-neutral-bg: rgba(148, 163, 184, 0.16);
-  --badge-neutral-text: #e2e8f0;
-  --badge-neutral-border: rgba(148, 163, 184, 0.26);
+  --badge-neutral-bg: rgba(138, 168, 208, 0.16);
+  --badge-neutral-text: #d0dcf0;
+  --badge-neutral-border: rgba(138, 168, 208, 0.28);
 }
 
 * {
@@ -243,7 +245,7 @@ h3,
   background-color: var(--bg-input);
   border: 1px solid var(--border-outer);
   color: var(--text-primary);
-  box-shadow: inset 0 1px 2px 0 rgba(15, 23, 42, 0.03);
+  box-shadow: inset 0 1px 2px 0 rgba(26, 42, 74, 0.04);
 }
 
 .liquid-input::placeholder {
@@ -264,8 +266,8 @@ select.liquid-input option {
 
 .liquid-glass {
   background-color: var(--bg-card);
-  backdrop-filter: blur(22px) saturate(180%);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(185%);
+  -webkit-backdrop-filter: blur(24px) saturate(185%);
   border: 1px solid var(--border-outer);
   box-shadow: var(--glass-shadow);
   color: var(--text-primary);
@@ -273,8 +275,8 @@ select.liquid-input option {
 
 .liquid-glass-elevated {
   background-color: var(--bg-card-elevated);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(195%);
+  -webkit-backdrop-filter: blur(28px) saturate(195%);
   border: 1px solid var(--border-outer);
   box-shadow: var(--glass-shadow);
   color: var(--text-primary);
@@ -284,16 +286,16 @@ select.liquid-input option {
   background-color: var(--bg-header);
   backdrop-filter: blur(24px) saturate(185%);
   -webkit-backdrop-filter: blur(24px) saturate(185%);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  border-bottom: 1px solid rgba(138, 168, 208, 0.24);
   box-shadow:
-    inset 0 -1px 0 0 rgba(56, 189, 248, 0.14),
-    0 10px 30px -10px rgba(15, 23, 42, 0.32);
+    inset 0 -1px 0 0 rgba(138, 168, 208, 0.18),
+    0 10px 30px -10px rgba(26, 42, 74, 0.36);
 }
 
 .liquid-glass-subtle {
   background-color: var(--bg-subtle);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(16px) saturate(175%);
+  -webkit-backdrop-filter: blur(16px) saturate(175%);
   border: 1px solid var(--border-outer);
   box-shadow: inset 0 1px 0 0 var(--border-color);
   color: var(--text-primary);
@@ -301,18 +303,18 @@ select.liquid-input option {
 
 .liquid-btn-primary {
   background: var(--brand-gradient);
-  color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #f4f7fc !important;
+  border: 1px solid rgba(208, 220, 240, 0.28);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.35),
-    0 8px 20px -4px rgba(37, 99, 235, 0.38);
+    inset 0 1px 0 0 rgba(244, 247, 252, 0.35),
+    0 8px 20px -4px rgba(26, 42, 74, 0.42);
 }
 
 .liquid-btn-primary:hover {
   transform: translateY(-1px);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.48),
-    0 12px 26px -4px rgba(37, 99, 235, 0.48);
+    inset 0 1px 0 0 rgba(244, 247, 252, 0.48),
+    0 12px 26px -4px rgba(26, 42, 74, 0.54);
 }
 
 .liquid-btn-primary:active {
@@ -321,18 +323,18 @@ select.liquid-input option {
 
 .liquid-btn-gold {
   background: var(--gold-gradient);
-  color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #f4f7fc !important;
+  border: 1px solid rgba(208, 220, 240, 0.28);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.38),
-    0 8px 20px -4px rgba(14, 165, 233, 0.38);
+    inset 0 1px 0 0 rgba(244, 247, 252, 0.38),
+    0 8px 20px -4px rgba(58, 90, 138, 0.40);
 }
 
 .liquid-btn-gold:hover {
   transform: translateY(-1px);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.50),
-    0 12px 26px -4px rgba(14, 165, 233, 0.50);
+    inset 0 1px 0 0 rgba(244, 247, 252, 0.50),
+    0 12px 26px -4px rgba(58, 90, 138, 0.52);
 }
 
 .theme-divider > :not([hidden]) ~ :not([hidden]) {
@@ -374,6 +376,10 @@ textarea {
   @page {
     margin: 8mm;
     size: auto;
+  }
+
+  .no-print {
+    display: none !important;
   }
 
   body * {

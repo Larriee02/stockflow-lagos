@@ -52,6 +52,7 @@ import { Modal } from './components/ui/Modal';
 import { StatCard } from './components/ui/StatCard';
 import { Badge } from './components/ui/Badge';
 import { EmptyState } from './components/ui/EmptyState';
+import { GradientBackground } from './components/ui/GradientBackground';
 import { ToastProvider, useToast } from './components/ui/Toast';
 import { ReceiptModal } from './components/receipt/ReceiptModal';
 import { CheckoutConfirmModal } from './components/counter/CheckoutConfirmModal';
@@ -143,18 +144,6 @@ const TAB_TO_ROUTE = {
 };
 
 export default function App() {
-  return (
-    <RouterProvider>
-      <ToastProvider>
-        <AppShell />
-      </ToastProvider>
-    </RouterProvider>
-  );
-}
-
-function AppShell() {
-  const { path, navigate } = useRouter();
-
   const [darkMode, setDarkMode] = useState(() => {
     try {
       return localStorage.getItem('stockflow_theme') === 'dark';
@@ -176,6 +165,21 @@ function AppShell() {
       // Ignore storage quota errors
     }
   }, [darkMode]);
+
+  return (
+    <RouterProvider>
+      <ToastProvider>
+        <GradientBackground darkMode={darkMode} />
+        <div className="relative z-10 min-h-screen">
+          <AppShell darkMode={darkMode} setDarkMode={setDarkMode} />
+        </div>
+      </ToastProvider>
+    </RouterProvider>
+  );
+}
+
+function AppShell({ darkMode, setDarkMode }) {
+  const { path, navigate } = useRouter();
 
   const basketRef = useRef(null);
   const tabSectionRef = useRef(null);
