@@ -184,7 +184,7 @@ export function SignupPage({ darkMode, setDarkMode, onAuthenticated, onNavigate 
               {
                 step: '01',
                 title: 'Enter Account Details',
-                desc: 'Fill in your name, store info, role, and preferred currency.',
+                desc: 'Fill in your name, store info, and preferred currency.',
               },
               {
                 step: '02',
@@ -382,26 +382,7 @@ export function SignupPage({ darkMode, setDarkMode, onAuthenticated, onNavigate 
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold mb-1 text-theme-primary">
-                        Account Role
-                      </label>
-                      <div className="relative">
-                        <ShieldCheck className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
-                        <select
-                          value={signupForm.role}
-                          onChange={(e) =>
-                            setSignupForm({ ...signupForm, role: e.target.value })
-                          }
-                          className="liquid-input w-full pl-10 pr-3 py-2.5 rounded-xl text-xs"
-                        >
-                          <option value="USER">Store Owner / Merchant</option>
-                          <option value="ADMIN">Platform Administrator</option>
-                        </select>
-                      </div>
-                    </div>
-
+                  <div className="grid grid-cols-1 gap-3">
                     <div>
                       <label className="block text-xs font-bold mb-1 text-theme-primary">
                         Default Currency

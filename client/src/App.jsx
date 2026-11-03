@@ -952,7 +952,31 @@ function AppShell() {
   }
 
   // 5. Dedicated Standalone Executive Admin Governance Page (/admin)
-  if (currentUser.role === 'ADMIN' && (path === '/admin' || path.startsWith('/admin/'))) {
+  //    Restricted to the single platform owner. The server independently enforces this on every admin API.
+  const isPlatformOwner = currentUser.role === 'ADMIN' && currentUser.status === 'APPROVED';
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    if (!isPlatformOwner) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6">
+          <div className="liquid-glass-elevated rounded-3xl p-8 max-w-md w-full text-center space-y-4">
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-rose-500/15 text-rose-500 flex items-center justify-center">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+            <h1 className="text-lg font-extrabold font-luxury text-theme-primary">Access Restricted</h1>
+            <p className="text-xs text-theme-secondary">
+              This area is reserved for the platform owner. You do not have permission to view it.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/store/sell')}
+              className="liquid-btn-primary px-5 py-2.5 rounded-xl text-xs font-extrabold cursor-pointer"
+            >
+              Return to My Store
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <AdminPage
         currentUser={currentUser}

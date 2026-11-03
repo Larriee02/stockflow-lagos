@@ -210,24 +210,7 @@ export function OAuthButtons({ actionLabel = 'Continue', onAuthenticated, onErro
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Account Type (New Accounts)
-              </label>
-              <div className="relative">
-                <ShieldCheck className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
-                <select
-                  value={oauthForm.role}
-                  onChange={(e) => setOauthForm({ ...oauthForm, role: e.target.value })}
-                  className="liquid-input w-full pl-10 pr-3 py-2.5 rounded-xl text-xs"
-                >
-                  <option value="USER">Store Owner / Merchant</option>
-                  <option value="ADMIN">Administrator</option>
-                </select>
-              </div>
-            </div>
-
+          <div className="grid grid-cols-1 gap-3">
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
                 Default Currency

@@ -8,6 +8,7 @@ const auditRepo = require('../repositories/audit.repository');
 const { verifyGoogleIdToken, verifyAppleIdToken } = require('./oauth.service');
 const { seedStarterCatalog } = require('../db/starterCatalog');
 const otpService = require('./otp.service');
+const { isOwnerEmail } = require('../config/owner');
 
 const MAX_FAILED_ATTEMPTS = 6;
 const LOCK_MINUTES = 15;
@@ -43,6 +44,10 @@ class AuthService {
     }
     if (!businessName || businessName.length < 2) {
       throw new AppError('Please enter your shop or business name.', 400, 'INVALID_BUSINESS');
+    }
+
+    if (isOwnerEmail(email)) {
+      throw new AppError('This email address is reserved.', 403, 'EMAIL_RESERVED');
     }
 
     const existing = await userRepo.findAuthByEmail(email);
@@ -112,6 +117,9 @@ class AuthService {
     if (password.length < 6) {
       throw new AppError('Password must be at least 6 characters long.', 400, 'WEAK_PASSWORD');
     }
+    if (isOwnerEmail(email)) {
+      throw new AppError('This email address is reserved.', 403, 'EMAIL_RESERVED');
+    }
 
     const existing = await userRepo.findAuthByEmail(email);
     if (existing) {
@@ -133,20 +141,10 @@ class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const adminCount = await userRepo.countAdmins();
-    const requestedAdmin = String(payload.role || '').toUpperCase() === 'ADMIN';
-    const isFirstOrConfiguredAdmin =
-      adminCount === 0 ||
-      Boolean(env.ADMIN_EMAIL && email === env.ADMIN_EMAIL);
-
-    // Initial founder or configured admin is approved immediately.
-    // Subsequent admin requests are kept PENDING for existing admin approval to prevent privilege escalation.
-    const role = isFirstOrConfiguredAdmin || requestedAdmin ? 'ADMIN' : 'USER';
-    const status = isFirstOrConfiguredAdmin
-      ? 'APPROVED'
-      : env.AUTO_APPROVE_USERS && !requestedAdmin
-      ? 'APPROVED'
-      : 'PENDING';
+    // Self-registration can NEVER create an administrator. Any client-supplied `role` is ignored.
+    // The sole admin (platform owner) is provisioned server-side at boot.
+    const role = 'USER';
+    const status = env.AUTO_APPROVE_USERS ? 'APPROVED' : 'PENDING';
     const currency = String(payload.currency || 'NGN').trim().toUpperCase();
 
     const userId = await db.withTransaction(async (tx) => {
@@ -280,9 +278,10 @@ class AuthService {
     }
 
     let profile = null;
-
+    let tokenVerified = false;
     // 1. Verify cryptographic ID token if provided and client ID is configured
     if (payload.id_token && ((provider === 'GOOGLE' && env.GOOGLE_CLIENT_ID) || (provider === 'APPLE' && env.APPLE_CLIENT_ID))) {
+      tokenVerified = true;
       if (provider === 'GOOGLE') {
         const verified = await verifyGoogleIdToken(payload.id_token);
         profile = {
@@ -323,9 +322,30 @@ class AuthService {
       };
     }
 
+    // The platform owner (sole admin) can only sign in with email + password + OTP.
+    if (isOwnerEmail(profile.email)) {
+      throw new AppError(
+        'This account must sign in with email and password.',
+        403,
+        'OWNER_PASSWORD_LOGIN_ONLY'
+      );
+    }
+
     let user = await userRepo.findAuthByProviderSub(provider, profile.sub);
     if (!user && profile.email) {
       user = await userRepo.findAuthByEmail(profile.email);
+      if (user && user.role === 'ADMIN') {
+        throw new AppError('This account must sign in with email and password.', 403);
+      }
+      // Without a cryptographically verified ID token we cannot prove email ownership,
+      // so never attach an unverified OAuth identity to an existing password account.
+      if (user && !tokenVerified && user.password_hash) {
+        throw new AppError(
+          'An account with this email already exists. Please sign in with your email and password.',
+          409,
+          'EMAIL_TAKEN'
+        );
+      }
       if (user) {
         await userRepo.linkProvider(user.id, provider, profile.sub, profile.avatarUrl);
         user = await userRepo.findAuthById(user.id);
@@ -335,20 +355,9 @@ class AuthService {
     let isNewUser = false;
     if (!user) {
       isNewUser = true;
-      const adminCount = await userRepo.countAdmins();
-      const requestedAdmin = String(payload.role || '').toUpperCase() === 'ADMIN';
-      const isFirstOrConfiguredAdmin =
-        adminCount === 0 ||
-        Boolean(env.ADMIN_EMAIL && profile.email === env.ADMIN_EMAIL);
-
-      // Initial founder or configured admin is approved immediately.
-      // Subsequent admin requests are kept PENDING for existing admin approval to prevent privilege escalation.
-      const role = isFirstOrConfiguredAdmin || requestedAdmin ? 'ADMIN' : 'USER';
-      const status = isFirstOrConfiguredAdmin
-        ? 'APPROVED'
-        : env.AUTO_APPROVE_USERS && !requestedAdmin
-        ? 'APPROVED'
-        : 'PENDING';
+      // OAuth sign-up can NEVER create an administrator. Any client-supplied `role` is ignored.
+      const role = 'USER';
+      const status = env.AUTO_APPROVE_USERS ? 'APPROVED' : 'PENDING';
       const businessName =
         String(payload.business_name || '').trim() || `${profile.fullName}'s Store`;
       const currency = String(payload.currency || 'NGN').trim().toUpperCase();

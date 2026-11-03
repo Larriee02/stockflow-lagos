@@ -5,6 +5,7 @@ const fs = require('fs');
 const env = require('./config/env');
 const db = require('./config/db');
 const AppError = require('./utils/AppError');
+const { isOwnerEmail } = require('./config/owner');
 const { verifySession, issueSessionCookie, clearSessionCookie, readToken } = require('./utils/session');
 const userRepo = require('./repositories/user.repository');
 const authService = require('./services/auth.service');
@@ -87,7 +88,7 @@ const requireAuth = asyncHandler(async (req, res, next) => {
 const requireApprovedUser = [
   requireAuth,
   (req, res, next) => {
-    if (req.user.role === 'ADMIN') return next();
+    if (req.user.role === 'ADMIN' && isOwnerEmail(req.user.email)) return next();
     if (req.user.status === 'PENDING') {
       return next(
         new AppError(
@@ -122,7 +123,12 @@ const requireApprovedUser = [
 const requireAdmin = [
   requireAuth,
   (req, res, next) => {
-    if (req.user.role !== 'ADMIN' || req.user.status !== 'APPROVED') {
+    // Only the single platform owner account may access the admin console.
+    if (
+      req.user.role !== 'ADMIN' ||
+      req.user.status !== 'APPROVED' ||
+      !isOwnerEmail(req.user.email)
+    ) {
       return next(new AppError('Administrator privileges required.', 403, 'FORBIDDEN_ADMIN'));
     }
     next();

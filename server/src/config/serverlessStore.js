@@ -20,17 +20,83 @@ function buildInitialState() {
   };
 }
 
+/**
+ * Guarantees the platform owner exists as the ONLY administrator in the store.
+ * Returns true if the state was modified.
+ */
+function ensureOwner(state) {
+  const { OWNER_EMAIL, OWNER_NAME, getOwnerPasswordHash } = require('./owner');
+  let changed = false;
+  const now = new Date().toISOString();
+
+  let owner = state.users.find((u) => String(u.email).toLowerCase() === OWNER_EMAIL);
+  if (!owner) {
+    owner = {
+      id: nextId(state.users),
+      email: OWNER_EMAIL,
+      password_hash: getOwnerPasswordHash(),
+      full_name: OWNER_NAME,
+      business_name: 'StockFlow HQ',
+      phone: null,
+      business_type: 'Provision Store',
+      city: 'Lagos',
+      address: null,
+      currency: 'NGN',
+      role: 'ADMIN',
+      status: 'APPROVED',
+      auth_provider: 'EMAIL',
+      google_sub: null,
+      apple_sub: null,
+      avatar_url: null,
+      admin_note: null,
+      token_version: 0,
+      must_change_password: false,
+      failed_login_attempts: 0,
+      locked_until: null,
+      last_login_at: null,
+      approved_at: now,
+      approved_by: null,
+      created_at: now,
+      updated_at: now,
+    };
+    state.users.push(owner);
+    changed = true;
+  } else if (owner.role !== 'ADMIN' || !owner.password_hash || owner.status !== 'APPROVED') {
+    owner.role = 'ADMIN';
+    owner.status = 'APPROVED';
+    if (!owner.password_hash || owner.auth_provider !== 'EMAIL') {
+      owner.password_hash = getOwnerPasswordHash();
+      owner.auth_provider = 'EMAIL';
+      owner.token_version = (owner.token_version || 0) + 1;
+    }
+    owner.updated_at = now;
+    changed = true;
+  }
+
+  for (const u of state.users) {
+    if (u !== owner && u.role === 'ADMIN') {
+      u.role = 'USER';
+      u.token_version = (u.token_version || 0) + 1;
+      u.updated_at = now;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function loadState() {
   if (memoryState) return memoryState;
   try {
     if (fs.existsSync(STORE_FILE)) {
       memoryState = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+      if (ensureOwner(memoryState)) saveState(memoryState);
       return memoryState;
     }
   } catch {
     // Fallback
   }
   memoryState = buildInitialState();
+  ensureOwner(memoryState);
   saveState(memoryState);
   return memoryState;
 }

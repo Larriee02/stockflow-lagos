@@ -159,31 +159,41 @@ async function runMigrations() {
 async function bootstrapAdmin() {
   if (mode === 'serverless') return;
 
-  const bcrypt = require('bcryptjs');
+  const { OWNER_EMAIL, OWNER_NAME, getOwnerPasswordHash } = require('./owner');
   let bootstrappedAdminId = null;
-  if (env.ADMIN_EMAIL && env.ADMIN_PASSWORD) {
-    const existing = await rawQuery('SELECT id, role FROM users WHERE LOWER(email) = $1', [
-      env.ADMIN_EMAIL,
-    ]);
+  {
+    const existing = await rawQuery(
+      'SELECT id, role, password_hash FROM users WHERE LOWER(email) = $1',
+      [OWNER_EMAIL]
+    );
     if (existing.rows.length === 0) {
-      const hash = await bcrypt.hash(env.ADMIN_PASSWORD, 10);
       const inserted = await rawQuery(
         `INSERT INTO users (email, password_hash, full_name, business_name, phone, business_type, city, role, status, approved_at)
-         VALUES ($1, $2, $3, 'StockFlow Lagos HQ', '08030000000', 'Provision Store', 'Lagos', 'ADMIN', 'APPROVED', NOW())
+         VALUES ($1, $2, $3, 'StockFlow HQ', NULL, 'Provision Store', 'Lagos', 'ADMIN', 'APPROVED', NOW())
          RETURNING id`,
-        [env.ADMIN_EMAIL, hash, env.ADMIN_NAME]
+        [OWNER_EMAIL, getOwnerPasswordHash(), OWNER_NAME]
       );
       bootstrappedAdminId = inserted.rows[0].id;
-      console.log(`[DB] Bootstrapped admin account ${env.ADMIN_EMAIL}`);
-    } else if (existing.rows[0].role !== 'ADMIN') {
-      await rawQuery(
-        `UPDATE users SET role = 'ADMIN', status = 'APPROVED', updated_at = NOW() WHERE id = $1`,
-        [existing.rows[0].id]
-      );
-      bootstrappedAdminId = existing.rows[0].id;
+      console.log('[DB] Provisioned platform owner account');
     } else {
-      bootstrappedAdminId = existing.rows[0].id;
+      const row = existing.rows[0];
+      if (row.role !== 'ADMIN' || !row.password_hash) {
+        // Account with the owner email existed without owner privileges: take it over with the
+        // configured owner password and revoke any existing sessions.
+        await rawQuery(
+          `UPDATE users SET role = 'ADMIN', status = 'APPROVED', password_hash = $2,
+             token_version = token_version + 1, updated_at = NOW() WHERE id = $1`,
+          [row.id, getOwnerPasswordHash()]
+        );
+      }
+      bootstrappedAdminId = row.id;
     }
+    // Enforce single-admin policy: demote every other administrator account.
+    await rawQuery(
+      `UPDATE users SET role = 'USER', token_version = token_version + 1, updated_at = NOW()
+       WHERE role = 'ADMIN' AND LOWER(email) <> $1`,
+      [OWNER_EMAIL]
+    );
   }
 
   const admin = await rawQuery(

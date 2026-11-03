@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const AppError = require('../utils/AppError');
 const userRepo = require('../repositories/user.repository');
 const auditRepo = require('../repositories/audit.repository');
+const { isOwnerEmail } = require('../config/owner');
 
 const VALID_STATUSES = ['PENDING', 'APPROVED', 'SUSPENDED', 'REJECTED'];
 const VALID_ROLES = ['USER', 'ADMIN'];
@@ -65,6 +66,9 @@ class AdminService {
     if (id === Number(actorAdminId) && nextStatus !== 'APPROVED') {
       throw new AppError('You cannot suspend or reject your own admin account.', 400, 'SELF_LOCKOUT');
     }
+    if (isOwnerEmail(target.email) && nextStatus !== 'APPROVED') {
+      throw new AppError('The platform owner account cannot be deactivated.', 400, 'OWNER_PROTECTED');
+    }
 
     if (target.role === 'ADMIN' && nextStatus !== 'APPROVED') {
       const adminCount = await userRepo.countAdmins();
@@ -98,6 +102,8 @@ class AdminService {
     for (const rawId of user_ids) {
       const id = Number(rawId);
       if (!id || (id === Number(actorAdminId) && nextStatus !== 'APPROVED')) continue;
+      const bulkTarget = await userRepo.adminFindById(id);
+      if (!bulkTarget || isOwnerEmail(bulkTarget.email)) continue;
       await userRepo.adminUpdateStatus(id, nextStatus, actorAdminId, note);
       updated.push(id);
     }
@@ -119,12 +125,20 @@ class AdminService {
     if (!VALID_ROLES.includes(nextRole)) {
       throw new AppError('Invalid role.', 400, 'INVALID_ROLE');
     }
+    // The administrator role is reserved exclusively for the platform owner.
+    if (nextRole === 'ADMIN') {
+      throw new AppError(
+        'The administrator role is reserved for the platform owner and cannot be assigned.',
+        403,
+        'ADMIN_ROLE_RESERVED'
+      );
+    }
 
     const target = await userRepo.adminFindById(id);
     if (!target) throw new AppError('User not found.', 404, 'USER_NOT_FOUND');
 
-    if (id === Number(actorAdminId) && nextRole !== 'ADMIN') {
-      throw new AppError('You cannot remove your own admin privileges.', 400, 'SELF_DEMOTE');
+    if (id === Number(actorAdminId) || isOwnerEmail(target.email)) {
+      throw new AppError('The platform owner account cannot be modified.', 400, 'OWNER_PROTECTED');
     }
 
     if (target.role === 'ADMIN' && nextRole !== 'ADMIN') {
@@ -167,6 +181,9 @@ class AdminService {
     const id = Number(targetId);
     const target = await userRepo.adminFindById(id);
     if (!target) throw new AppError('User not found.', 404);
+    if (isOwnerEmail(target.email)) {
+      throw new AppError('The platform owner password can only be changed from Settings.', 400, 'OWNER_PROTECTED');
+    }
 
     const tempPassword =
       temporary_password && String(temporary_password).length >= 6
@@ -194,6 +211,9 @@ class AdminService {
     }
     const target = await userRepo.adminFindById(id);
     if (!target) throw new AppError('User not found.', 404);
+    if (isOwnerEmail(target.email)) {
+      throw new AppError('The platform owner account cannot be deleted.', 400, 'OWNER_PROTECTED');
+    }
 
     await auditRepo.log({
       actorUserId: actorAdminId,
