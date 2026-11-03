@@ -1254,6 +1254,31 @@ function AppShell() {
     });
   };
 
+  const openReceiptForTransaction = (tx) => {
+    setLastReceipt({
+      receiptNo: `SFL-${String(tx.id).padStart(6, '0')}`,
+      timestamp: new Date(tx.transaction_date).toLocaleString(),
+      businessName: currentUser?.business_name || 'StockFlow Lagos Store',
+      location: currentUser?.address || currentUser?.city || 'Lagos, Nigeria',
+      cashierName: currentUser?.full_name || 'Store Owner',
+      customerName: tx.counterparty_name || 'Customer',
+      customerPhone: '',
+      paymentMethod: tx.payment_method || 'CASH',
+      items: [
+        {
+          name: tx.description || tx.category || 'Retail Sale Order',
+          unit: 'Order',
+          quantity: 1,
+          unitPrice: Number(tx.amount || 0),
+          lineTotal: Number(tx.amount || 0),
+        },
+      ],
+      totalBill: Number(tx.amount || 0),
+      amountPaid: Number(tx.amount || 0),
+      balanceDue: 0,
+    });
+  };
+
   // Expected value inside Stock Movement modal
   const expectedMovementValue = useMemo(() => {
     if (!selectedProduct || !movementForm.quantity) return 0;
@@ -3125,15 +3150,27 @@ function AppShell() {
                             <span className="text-theme-secondary">
                               {new Date(tx.transaction_date).toLocaleString()}
                             </span>
-                            {!isInactive && (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenCorrectTx(tx)}
-                                className="liquid-glass-subtle px-2.5 py-1 rounded-lg text-xs font-bold text-amber-300 hover:text-amber-200 flex items-center gap-1 cursor-pointer"
-                              >
-                                <Edit3 className="w-3 h-3" /> Correct / Void
-                              </button>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              {tx.type === 'INFLOW' && (
+                                <button
+                                  type="button"
+                                  onClick={() => openReceiptForTransaction(tx)}
+                                  className="liquid-glass-subtle px-2 py-1 rounded-lg text-xs font-bold text-theme-brand flex items-center gap-1 cursor-pointer"
+                                  title="View Customer Receipt"
+                                >
+                                  <FileText className="w-3 h-3" /> Receipt
+                                </button>
+                              )}
+                              {!isInactive && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenCorrectTx(tx)}
+                                  className="liquid-glass-subtle px-2.5 py-1 rounded-lg text-xs font-bold text-amber-300 hover:text-amber-200 flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Edit3 className="w-3 h-3" /> Correct / Void
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
@@ -3241,21 +3278,34 @@ function AppShell() {
                                 {formatNaira(tx.amount)}
                               </td>
                               <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                                {!isInactive ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenCorrectTx(tx)}
-                                    title="Correct or void this entry while preserving audit history"
-                                    className="liquid-glass-subtle px-2.5 py-1.5 rounded-xl text-xs font-bold text-theme-primary hover:text-amber-300 inline-flex items-center gap-1 cursor-pointer"
-                                  >
-                                    <Edit3 className="w-3.5 h-3.5" />
-                                    <span>Correct</span>
-                                  </button>
-                                ) : (
-                                  <span className="text-[11px] text-slate-500 italic">
-                                    Audit Locked
-                                  </span>
-                                )}
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {tx.type === 'INFLOW' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openReceiptForTransaction(tx)}
+                                      title="View, print, or share customer receipt"
+                                      className="liquid-glass-subtle px-2.5 py-1.5 rounded-xl text-xs font-bold text-theme-brand hover:underline inline-flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <FileText className="w-3.5 h-3.5" />
+                                      <span>Receipt</span>
+                                    </button>
+                                  )}
+                                  {!isInactive ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenCorrectTx(tx)}
+                                      title="Correct or void this entry while preserving audit history"
+                                      className="liquid-glass-subtle px-2.5 py-1.5 rounded-xl text-xs font-bold text-theme-primary hover:text-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                      <span>Correct</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500 italic">
+                                      Audit Locked
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
