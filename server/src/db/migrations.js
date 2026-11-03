@@ -169,4 +169,12 @@ module.exports = [
       DELETE FROM products WHERE user_id IS NULL;
     `,
   },
+  {
+    id: '004_expanded_movement_types',
+    sql: `
+      ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_movement_type_check;
+      ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_movement_type_check
+        CHECK (movement_type IN ('SALE', 'RESTOCK', 'ADJUSTMENT', 'DAMAGE', 'DAMAGED', 'EXPIRED', 'MISSING', 'SURPLUS'));
+    `,
+  },
 ];

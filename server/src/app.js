@@ -449,6 +449,33 @@ app.get(
   })
 );
 
+app.post(
+  '/api/v1/inventory/bulk-import',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const result = await inventoryService.bulkImportProducts(req.user.id, req.body);
+    res.status(200).json(result);
+  })
+);
+
+app.post(
+  '/api/v1/inventory/batch-adjust',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const result = await inventoryService.batchStockAdjustment(req.user.id, req.body);
+    res.status(200).json(result);
+  })
+);
+
+app.post(
+  '/api/v1/inventory/stock-count',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const result = await inventoryService.batchPhysicalStockCount(req.user.id, req.body);
+    res.status(200).json(result);
+  })
+);
+
 app.get(
   '/api/v1/transactions',
   requireApprovedUser,

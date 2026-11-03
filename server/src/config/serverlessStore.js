@@ -818,6 +818,26 @@ async function executeQuery(text, params = []) {
     return { rows: prod ? [prod] : [], rowCount: prod ? 1 : 0 };
   }
 
+  if (upper.startsWith('UPDATE PRODUCTS SET NAME = $1, CATEGORY = $2, UNIT = $3, COST_PRICE = $4, SELLING_PRICE = $5, STOCK_QUANTITY = $6')) {
+    const [name, category, unit, cost_price, selling_price, stock_quantity, reorder_level, supplier_name, id, uid] =
+      params;
+    const prod = state.products.find(
+      (p) => Number(p.id) === Number(id) && Number(p.user_id) === Number(uid)
+    );
+    if (!prod) return { rows: [], rowCount: 0 };
+    prod.name = name;
+    prod.category = category;
+    prod.unit = unit;
+    prod.cost_price = Number(cost_price);
+    prod.selling_price = Number(selling_price);
+    prod.stock_quantity = Number(stock_quantity);
+    prod.reorder_level = Number(reorder_level);
+    prod.supplier_name = supplier_name;
+    prod.updated_at = new Date().toISOString();
+    saveState(state);
+    return { rows: [prod], rowCount: 1 };
+  }
+
   if (upper.startsWith('UPDATE PRODUCTS SET NAME = $1')) {
     const [name, category, unit, cost_price, selling_price, reorder_level, supplier_name, id, uid] =
       params;
@@ -892,7 +912,7 @@ async function executeQuery(text, params = []) {
 
   if (upper.startsWith('INSERT INTO STOCK_MOVEMENTS')) {
     let record;
-    if (upper.includes("'SALE'")) {
+    if (upper.includes("'SALE'") && !upper.includes('IDEMPOTENCY_KEY')) {
       const [
         user_id,
         product_id,
@@ -910,6 +930,34 @@ async function executeQuery(text, params = []) {
         idempotency_key: null,
         product_id: Number(product_id),
         movement_type: 'SALE',
+        quantity_change: Number(quantity_change),
+        previous_stock: Number(previous_stock),
+        new_stock: Number(new_stock),
+        unit_price: Number(unit_price),
+        total_value: Number(total_value),
+        counterparty_name,
+        note,
+        created_at: new Date().toISOString(),
+      };
+    } else if (!upper.includes('IDEMPOTENCY_KEY')) {
+      const [
+        user_id,
+        product_id,
+        movement_type,
+        quantity_change,
+        previous_stock,
+        new_stock,
+        unit_price,
+        total_value,
+        counterparty_name,
+        note,
+      ] = params;
+      record = {
+        id: nextId(state.stock_movements),
+        user_id: Number(user_id),
+        idempotency_key: null,
+        product_id: Number(product_id),
+        movement_type,
         quantity_change: Number(quantity_change),
         previous_stock: Number(previous_stock),
         new_stock: Number(new_stock),

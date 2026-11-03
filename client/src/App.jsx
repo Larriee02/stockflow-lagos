@@ -31,6 +31,10 @@ import {
   FileText,
   Sparkles,
   Settings,
+  Upload,
+  SlidersHorizontal,
+  Layers,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useDebounce } from './hooks/useDebounce';
 import { Modal } from './components/ui/Modal';
@@ -41,6 +45,9 @@ import { ToastProvider, useToast } from './components/ui/Toast';
 import { ReceiptModal } from './components/receipt/ReceiptModal';
 import { CheckoutConfirmModal } from './components/counter/CheckoutConfirmModal';
 import { MobileCartSheet } from './components/counter/MobileCartSheet';
+import { BulkImportModal } from './components/inventory/BulkImportModal';
+import { PhysicalStockAuditModal } from './components/inventory/PhysicalStockAuditModal';
+import { BatchAdjustModal } from './components/inventory/BatchAdjustModal';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
@@ -195,7 +202,10 @@ function AppShell() {
 
   // Check History Filters
   const [historyTypeFilter, setHistoryTypeFilter] = useState('ALL');
+  const [historyProductFilter, setHistoryProductFilter] = useState('ALL');
   const [historyDateRange, setHistoryDateRange] = useState('ALL');
+  const [historyStartDate, setHistoryStartDate] = useState('');
+  const [historyEndDate, setHistoryEndDate] = useState('');
   const [historyCustomDate, setHistoryCustomDate] = useState('');
   const [historySearch, setHistorySearch] = useState('');
   const debouncedHistorySearch = useDebounce(historySearch, 150);
@@ -212,6 +222,9 @@ function AppShell() {
   // Discretionary MVP Feature Modals
   const [lastReceipt, setLastReceipt] = useState(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
+  const [showBulkImportModal, setShowBulkImportModal] = useState(false);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [showBatchAdjustModal, setShowBatchAdjustModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileForm, setProfileForm] = useState({
     full_name: '',
@@ -395,10 +408,24 @@ function AppShell() {
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
     return movements.filter((m) => {
-      if (historyTypeFilter !== 'ALL' && m.movement_type !== historyTypeFilter) {
-        return false;
+      // Type Filter
+      if (historyTypeFilter !== 'ALL') {
+        const mType = String(m.movement_type || '').toUpperCase();
+        if (historyTypeFilter === 'DAMAGED') {
+          if (mType !== 'DAMAGED' && mType !== 'DAMAGE') return false;
+        } else if (mType !== historyTypeFilter) {
+          return false;
+        }
       }
 
+      // Product Filter
+      if (historyProductFilter !== 'ALL') {
+        if (String(m.product_id) !== String(historyProductFilter)) {
+          return false;
+        }
+      }
+
+      // Date Range Filter
       const itemTime = new Date(m.created_at).getTime();
       if (historyDateRange === 'TODAY' && itemTime < startOfToday) {
         return false;
@@ -409,9 +436,19 @@ function AppShell() {
       if (historyDateRange === '30DAYS' && itemTime < now.getTime() - 30 * 86400000) {
         return false;
       }
-      if (historyDateRange === 'CUSTOM' && historyCustomDate) {
-        const itemDateStr = new Date(m.created_at).toISOString().slice(0, 10);
-        if (itemDateStr !== historyCustomDate) return false;
+      if (historyDateRange === 'CUSTOM') {
+        if (historyStartDate) {
+          const startTime = new Date(historyStartDate).setHours(0, 0, 0, 0);
+          if (itemTime < startTime) return false;
+        }
+        if (historyEndDate) {
+          const endTime = new Date(historyEndDate).setHours(23, 59, 59, 999);
+          if (itemTime > endTime) return false;
+        }
+        if (historyCustomDate && !historyStartDate && !historyEndDate) {
+          const itemDateStr = new Date(m.created_at).toISOString().slice(0, 10);
+          if (itemDateStr !== historyCustomDate) return false;
+        }
       }
 
       if (!q) return true;
@@ -425,7 +462,10 @@ function AppShell() {
   }, [
     movements,
     historyTypeFilter,
+    historyProductFilter,
     historyDateRange,
+    historyStartDate,
+    historyEndDate,
     historyCustomDate,
     debouncedHistorySearch,
   ]);
@@ -434,20 +474,47 @@ function AppShell() {
     return filteredMovements.reduce(
       (acc, m) => {
         const val = Number(m.total_value || 0);
-        if (m.movement_type === 'SALE') {
+        const t = String(m.movement_type || '').toUpperCase();
+        if (t === 'SALE') {
           acc.salesCount += 1;
           acc.salesValue += val;
-        } else if (m.movement_type === 'RESTOCK') {
+        } else if (t === 'RESTOCK') {
           acc.restockCount += 1;
           acc.restockValue += val;
-        } else if (m.movement_type === 'DAMAGE') {
-          acc.damageValue += val;
+        } else if (['DAMAGED', 'DAMAGE', 'EXPIRED', 'MISSING'].includes(t)) {
+          acc.lossCount += 1;
+          acc.lossValue += val;
+        } else if (t === 'ADJUSTMENT' || t === 'SURPLUS') {
+          acc.auditCount += 1;
         }
         return acc;
       },
-      { salesCount: 0, salesValue: 0, restockCount: 0, restockValue: 0, damageValue: 0 }
+      { salesCount: 0, salesValue: 0, restockCount: 0, restockValue: 0, lossCount: 0, lossValue: 0, auditCount: 0 }
     );
   }, [filteredMovements]);
+
+  const getMovementBadgeInfo = (movementType) => {
+    const norm = String(movementType || '').toUpperCase();
+    switch (norm) {
+      case 'SALE':
+        return { variant: 'info', label: 'SALE OUT' };
+      case 'RESTOCK':
+        return { variant: 'success', label: 'RESTOCK' };
+      case 'DAMAGE':
+      case 'DAMAGED':
+        return { variant: 'danger', label: 'DAMAGED' };
+      case 'EXPIRED':
+        return { variant: 'warning', label: 'EXPIRED' };
+      case 'MISSING':
+        return { variant: 'danger', label: 'MISSING' };
+      case 'SURPLUS':
+        return { variant: 'info', label: 'SURPLUS' };
+      case 'ADJUSTMENT':
+        return { variant: 'neutral', label: 'SHELF COUNT' };
+      default:
+        return { variant: 'neutral', label: norm };
+    }
+  };
 
   // Cart Calculations
   const cartItems = useMemo(() => {
@@ -1712,11 +1779,38 @@ function AppShell() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => setShowBulkImportModal(true)}
+                  className="liquid-glass-subtle flex items-center justify-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 border border-emerald-500/30 cursor-pointer"
+                  title="Import goods in bulk via CSV or Excel paste"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Bulk Import</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAuditModal(true)}
+                  className="liquid-glass-subtle flex items-center justify-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold text-sky-400 hover:bg-sky-500/10 border border-sky-500/30 cursor-pointer"
+                  title="Physical shelf stock count audit comparing expected vs physical count"
+                >
+                  <ClipboardCheck className="w-3.5 h-3.5" />
+                  <span>Stock Audit</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBatchAdjustModal(true)}
+                  className="liquid-glass-subtle flex items-center justify-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-bold text-indigo-400 hover:bg-indigo-500/10 border border-indigo-500/30 cursor-pointer"
+                  title="Fast multi-product stock adjust (restock, damage, expired, missing)"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Batch Adjust</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowRestockModal(true)}
                   className="liquid-btn-primary flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  Market Restock Order ({lowStockRestockPlan.length})
+                  Market Order ({lowStockRestockPlan.length})
                 </button>
                 <button
                   onClick={() => setLowStockOnly(!lowStockOnly)}
@@ -2173,13 +2267,13 @@ function AppShell() {
               <div className="liquid-glass p-4 rounded-2xl flex items-center justify-between">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-wider text-theme-secondary">
-                    Spoiled / Damaged Goods
+                    Losses, Damaged & Spoilage
                   </p>
                   <p className="text-xl font-extrabold font-luxury tabular-nums mt-1 text-theme-outflow">
-                    {formatNaira(historySummary.damageValue)}
+                    {formatNaira(historySummary.lossValue)}
                   </p>
                   <p className="text-xs mt-0.5 text-theme-secondary">
-                    Total Matching Records: {filteredMovements.length}
+                    Across {historySummary.lossCount} write-off(s) ({filteredMovements.length} total rows)
                   </p>
                 </div>
                 <History className="w-6 h-6 opacity-80 text-theme-brand" />
@@ -2192,19 +2286,22 @@ function AppShell() {
                 style={{ borderColor: 'var(--border-outer)' }}
                 className="p-3.5 sm:p-4 border-b space-y-3"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  {/* Movement Types Filter Buttons */}
                   <div className="flex flex-wrap gap-1.5">
                     {[
                       { id: 'ALL', label: 'All Activity' },
                       { id: 'SALE', label: 'Sales Out' },
-                      { id: 'RESTOCK', label: 'Market Restocks' },
+                      { id: 'RESTOCK', label: 'Restocks' },
+                      { id: 'DAMAGED', label: 'Damaged' },
+                      { id: 'EXPIRED', label: 'Expired' },
+                      { id: 'MISSING', label: 'Missing' },
                       { id: 'ADJUSTMENT', label: 'Shelf Counts' },
-                      { id: 'DAMAGE', label: 'Damaged' },
                     ].map((type) => (
                       <button
                         key={type.id}
                         onClick={() => setHistoryTypeFilter(type.id)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
                           historyTypeFilter === type.id
                             ? 'liquid-btn-primary'
                             : 'liquid-glass-subtle'
@@ -2215,20 +2312,47 @@ function AppShell() {
                     ))}
                   </div>
 
+                  {/* Product Filter Dropdown */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs font-bold text-theme-secondary whitespace-nowrap">
+                      Product:
+                    </span>
+                    <select
+                      value={historyProductFilter}
+                      onChange={(e) => setHistoryProductFilter(e.target.value)}
+                      className="liquid-input text-xs rounded-xl px-2.5 py-1.5 max-w-[200px] truncate"
+                    >
+                      <option value="ALL">All Goods ({products.length})</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Date Filter & Search Row */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1 border-t theme-divider">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {[
                       { id: 'ALL', label: 'All Dates' },
                       { id: 'TODAY', label: 'Today' },
                       { id: '7DAYS', label: '7 Days' },
                       { id: '30DAYS', label: '30 Days' },
+                      { id: 'CUSTOM', label: 'Date Range' },
                     ].map((d) => (
                       <button
                         key={d.id}
                         onClick={() => {
                           setHistoryDateRange(d.id);
-                          setHistoryCustomDate('');
+                          if (d.id !== 'CUSTOM') {
+                            setHistoryStartDate('');
+                            setHistoryEndDate('');
+                            setHistoryCustomDate('');
+                          }
                         }}
-                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
                           historyDateRange === d.id
                             ? 'liquid-btn-primary'
                             : 'liquid-glass-subtle'
@@ -2238,32 +2362,35 @@ function AppShell() {
                       </button>
                     ))}
 
-                    <div className="flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5 text-theme-secondary" />
-                      <input
-                        type="date"
-                        value={historyCustomDate}
-                        onChange={(e) => {
-                          setHistoryCustomDate(e.target.value);
-                          setHistoryDateRange(e.target.value ? 'CUSTOM' : 'ALL');
-                        }}
-                        className="liquid-input text-xs rounded-xl px-2.5 py-1.5"
-                      />
-                    </div>
+                    {historyDateRange === 'CUSTOM' && (
+                      <div className="flex items-center gap-1.5 bg-slate-900/60 p-1 rounded-xl border border-slate-800 text-xs">
+                        <span className="text-[11px] text-theme-secondary">From:</span>
+                        <input
+                          type="date"
+                          value={historyStartDate}
+                          onChange={(e) => setHistoryStartDate(e.target.value)}
+                          className="liquid-input text-xs rounded-lg px-2 py-1"
+                        />
+                        <span className="text-[11px] text-theme-secondary">To:</span>
+                        <input
+                          type="date"
+                          value={historyEndDate}
+                          onChange={(e) => setHistoryEndDate(e.target.value)}
+                          className="liquid-input text-xs rounded-lg px-2 py-1"
+                        />
+                      </div>
+                    )}
                   </div>
-                </div>
 
-                {/* Search within History & Export */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-                  <div className="relative flex-1 max-w-md flex items-center gap-2">
+                  <div className="relative flex-1 max-w-sm flex items-center gap-2">
                     <div className="relative flex-1">
-                      <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-theme-secondary" />
                       <input
                         type="text"
-                        placeholder="Search history by item, customer, supplier, or note..."
+                        placeholder="Search item, note, supplier..."
                         value={historySearch}
                         onChange={(e) => setHistorySearch(e.target.value)}
-                        className="liquid-input w-full pl-10 pr-4 py-2 text-sm rounded-2xl"
+                        className="liquid-input w-full pl-9 pr-3 py-1.5 text-xs rounded-xl"
                       />
                     </div>
                     {historySearch && (
@@ -2272,7 +2399,7 @@ function AppShell() {
                         onClick={() => setHistorySearch('')}
                         className="text-xs font-bold text-theme-outflow flex items-center gap-1 cursor-pointer shrink-0"
                       >
-                        <XCircle className="w-4 h-4" /> Clear
+                        <XCircle className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
@@ -2284,9 +2411,9 @@ function AppShell() {
                         `shop-history-${new Date().toISOString().slice(0, 10)}.csv`
                       )
                     }
-                    className="liquid-glass-subtle flex items-center justify-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-2xl hover:opacity-80 cursor-pointer"
+                    className="liquid-glass-subtle flex items-center justify-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl hover:opacity-80 cursor-pointer"
                   >
-                    <Download className="w-3.5 h-3.5" /> Export History CSV
+                    <Download className="w-3.5 h-3.5" /> CSV
                   </button>
                 </div>
               </div>
@@ -2295,11 +2422,14 @@ function AppShell() {
                 <EmptyState
                   icon={History}
                   title="No history records match your filter"
-                  description="Try switching to 'All Activity' or 'All Dates' to see all past sales, restocks, and shelf counts."
-                  actionLabel="Reset History Filters"
+                  description="Try resetting your movement type, product, or date filters."
+                  actionLabel="Reset All History Filters"
                   onAction={() => {
                     setHistoryTypeFilter('ALL');
+                    setHistoryProductFilter('ALL');
                     setHistoryDateRange('ALL');
+                    setHistoryStartDate('');
+                    setHistoryEndDate('');
                     setHistoryCustomDate('');
                     setHistorySearch('');
                   }}
@@ -2308,70 +2438,61 @@ function AppShell() {
                 <>
                   {/* Mobile History Cards (< 768px) */}
                   <div className="md:hidden divide-y theme-divider">
-                    {filteredMovements.map((m) => (
-                      <div key={m.id} className="p-4 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <Badge
-                            variant={
-                              m.movement_type === 'SALE'
-                                ? 'info'
-                                : m.movement_type === 'RESTOCK'
-                                ? 'success'
-                                : m.movement_type === 'DAMAGE'
-                                ? 'danger'
-                                : 'neutral'
-                            }
-                          >
-                            {m.movement_type === 'ADJUSTMENT'
-                              ? 'SHELF COUNT'
-                              : m.movement_type}
-                          </Badge>
-                          <span className="font-extrabold font-luxury tabular-nums text-sm text-theme-primary">
-                            {formatNaira(m.total_value)}
-                          </span>
-                        </div>
-                        <div className="font-extrabold font-luxury text-sm text-theme-primary">
-                          {m.product_name}
-                        </div>
-                        <div className="liquid-glass-subtle flex items-center justify-between text-xs p-2.5 rounded-2xl tabular-nums">
-                          <span className="text-theme-secondary">
-                            Before: {Number(m.previous_stock)}
-                          </span>
-                          <strong
-                            className={
-                              Number(m.quantity_change) >= 0
-                                ? 'text-theme-inflow'
-                                : 'text-theme-outflow'
-                            }
-                          >
-                            {Number(m.quantity_change) > 0
-                              ? `+${Number(m.quantity_change)}`
-                              : Number(m.quantity_change)}{' '}
-                            {m.unit}
-                          </strong>
-                          <span className="text-theme-primary font-bold">
-                            After: {Number(m.new_stock)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] text-theme-secondary pt-1 border-t theme-divider">
-                          <span>
-                            {m.counterparty_name || m.note || 'Walk-in / Shop Log'}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <span>{new Date(m.created_at).toLocaleDateString()}</span>
-                            {m.movement_type === 'SALE' && (
-                              <button
-                                type="button"
-                                onClick={() => openReceiptForMovement(m)}
-                                className="font-bold text-theme-brand hover:underline flex items-center gap-1 cursor-pointer"
-                              >
-                                <FileText className="w-3.5 h-3.5" /> Receipt
-                              </button>
-                            )}
+                    {filteredMovements.map((m) => {
+                      const badgeInfo = getMovementBadgeInfo(m.movement_type);
+                      return (
+                        <div key={m.id} className="p-4 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge variant={badgeInfo.variant}>
+                              {badgeInfo.label}
+                            </Badge>
+                            <span className="font-extrabold font-luxury tabular-nums text-sm text-theme-primary">
+                              {formatNaira(m.total_value)}
+                            </span>
+                          </div>
+                          <div className="font-extrabold font-luxury text-sm text-theme-primary">
+                            {m.product_name}
+                          </div>
+                          <div className="liquid-glass-subtle flex items-center justify-between text-xs p-2.5 rounded-2xl tabular-nums">
+                            <span className="text-theme-secondary">
+                              Before: {Number(m.previous_stock)}
+                            </span>
+                            <strong
+                              className={
+                                Number(m.quantity_change) >= 0
+                                  ? 'text-theme-inflow'
+                                  : 'text-theme-outflow'
+                              }
+                            >
+                              {Number(m.quantity_change) > 0
+                                ? `+${Number(m.quantity_change)}`
+                                : Number(m.quantity_change)}{' '}
+                              {m.unit}
+                            </strong>
+                            <span className="text-theme-primary font-bold">
+                              After: {Number(m.new_stock)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] text-theme-secondary pt-1 border-t theme-divider">
+                            <span>
+                              {m.counterparty_name || m.note || 'Walk-in / Shop Log'}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span>{new Date(m.created_at).toLocaleDateString()}</span>
+                              {m.movement_type === 'SALE' && (
+                                <button
+                                  type="button"
+                                  onClick={() => openReceiptForMovement(m)}
+                                  className="font-bold text-theme-brand hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                  <FileText className="w-3.5 h-3.5" /> Receipt
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Desktop History Table (>= 768px) */}
@@ -2396,85 +2517,76 @@ function AppShell() {
                         </tr>
                       </thead>
                       <tbody className="divide-y theme-divider">
-                        {filteredMovements.map((m) => (
-                          <tr
-                            key={m.id}
-                            className="hover:bg-white/30 dark:hover:bg-white/5"
-                          >
-                            <td className="py-3.5 px-4 text-xs whitespace-nowrap tabular-nums text-theme-secondary">
-                              {new Date(m.created_at).toLocaleString()}
-                            </td>
-                            <td className="py-3.5 px-4">
-                              <div className="font-extrabold font-luxury text-theme-primary">
-                                {m.product_name}
-                              </div>
-                              <div className="text-xs font-mono text-theme-secondary">
-                                {m.sku}
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4">
-                              <Badge
-                                variant={
-                                  m.movement_type === 'SALE'
-                                    ? 'info'
-                                    : m.movement_type === 'RESTOCK'
-                                    ? 'success'
-                                    : m.movement_type === 'DAMAGE'
-                                    ? 'danger'
-                                    : 'neutral'
-                                }
-                              >
-                                {m.movement_type === 'ADJUSTMENT'
-                                  ? 'SHELF COUNT'
-                                  : m.movement_type}
-                              </Badge>
-                            </td>
-                            <td className="py-3.5 px-4 text-right tabular-nums text-theme-secondary">
-                              {Number(m.previous_stock)} {m.unit}
-                            </td>
-                            <td
-                              className={`py-3.5 px-4 text-right font-extrabold tabular-nums ${
-                                Number(m.quantity_change) >= 0
-                                  ? 'text-theme-inflow'
-                                  : 'text-theme-outflow'
-                              }`}
+                        {filteredMovements.map((m) => {
+                          const badgeInfo = getMovementBadgeInfo(m.movement_type);
+                          return (
+                            <tr
+                              key={m.id}
+                              className="hover:bg-white/30 dark:hover:bg-white/5"
                             >
-                              {Number(m.quantity_change) > 0
-                                ? `+${Number(m.quantity_change)}`
-                                : Number(m.quantity_change)}{' '}
-                              {m.unit}
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-extrabold tabular-nums text-theme-primary">
-                              {Number(m.new_stock)} {m.unit}
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums text-theme-primary">
-                              {formatNaira(m.total_value)}
-                            </td>
-                            <td className="py-3.5 px-4 text-xs text-theme-secondary">
-                              <div className="flex items-center justify-between gap-2">
-                                <div>
-                                  {m.counterparty_name ? (
-                                    <strong className="text-theme-primary">
-                                      {m.counterparty_name}
-                                    </strong>
-                                  ) : null}
-                                  {m.counterparty_name && m.note ? ' — ' : ''}
-                                  {m.note || (!m.counterparty_name ? '—' : '')}
+                              <td className="py-3.5 px-4 text-xs whitespace-nowrap tabular-nums text-theme-secondary">
+                                {new Date(m.created_at).toLocaleString()}
+                              </td>
+                              <td className="py-3.5 px-4">
+                                <div className="font-extrabold font-luxury text-theme-primary">
+                                  {m.product_name}
                                 </div>
-                                {m.movement_type === 'SALE' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => openReceiptForMovement(m)}
-                                    className="liquid-glass-subtle px-2.5 py-1 rounded-lg text-[11px] font-bold text-theme-brand hover:opacity-80 flex items-center gap-1 cursor-pointer shrink-0"
-                                    title="View & Print Sales Receipt"
-                                  >
-                                    <FileText className="w-3 h-3" /> Slip
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                                <div className="text-xs font-mono text-theme-secondary">
+                                  {m.sku}
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4">
+                                <Badge variant={badgeInfo.variant}>
+                                  {badgeInfo.label}
+                                </Badge>
+                              </td>
+                              <td className="py-3.5 px-4 text-right tabular-nums text-theme-secondary">
+                                {Number(m.previous_stock)} {m.unit}
+                              </td>
+                              <td
+                                className={`py-3.5 px-4 text-right font-extrabold tabular-nums ${
+                                  Number(m.quantity_change) >= 0
+                                    ? 'text-theme-inflow'
+                                    : 'text-theme-outflow'
+                                }`}
+                              >
+                                {Number(m.quantity_change) > 0
+                                  ? `+${Number(m.quantity_change)}`
+                                  : Number(m.quantity_change)}{' '}
+                                {m.unit}
+                              </td>
+                              <td className="py-3.5 px-4 text-right font-extrabold tabular-nums text-theme-primary">
+                                {Number(m.new_stock)} {m.unit}
+                              </td>
+                              <td className="py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums text-theme-primary">
+                                {formatNaira(m.total_value)}
+                              </td>
+                              <td className="py-3.5 px-4 text-xs text-theme-secondary">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div>
+                                    {m.counterparty_name ? (
+                                      <strong className="text-theme-primary">
+                                        {m.counterparty_name}
+                                      </strong>
+                                    ) : null}
+                                    {m.counterparty_name && m.note ? ' — ' : ''}
+                                    {m.note || (!m.counterparty_name ? '—' : '')}
+                                  </div>
+                                  {m.movement_type === 'SALE' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openReceiptForMovement(m)}
+                                      className="liquid-glass-subtle px-2.5 py-1 rounded-lg text-[11px] font-bold text-theme-brand hover:opacity-80 flex items-center gap-1 cursor-pointer shrink-0"
+                                      title="View & Print Sales Receipt"
+                                    >
+                                      <FileText className="w-3 h-3" /> Slip
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -2840,17 +2952,19 @@ function AppShell() {
         )}`}
       >
         <form onSubmit={handleRecordMovement} className="space-y-4">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
             {[
-              { id: 'RESTOCK', label: 'Restock' },
-              { id: 'ADJUSTMENT', label: 'Stock Count' },
-              { id: 'DAMAGE', label: 'Damaged' },
+              { id: 'RESTOCK', label: 'Restock (+)' },
+              { id: 'ADJUSTMENT', label: 'Shelf Count' },
+              { id: 'DAMAGED', label: 'Damaged (-)' },
+              { id: 'EXPIRED', label: 'Expired (-)' },
+              { id: 'MISSING', label: 'Missing (-)' },
             ].map((t) => (
               <button
                 type="button"
                 key={t.id}
                 onClick={() => setMovementForm({ ...movementForm, movement_type: t.id })}
-                className={`py-2.5 px-2 rounded-xl text-xs font-bold cursor-pointer ${
+                className={`py-2 px-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
                   movementForm.movement_type === t.id
                     ? 'liquid-btn-primary'
                     : 'liquid-glass-subtle'
@@ -2866,7 +2980,9 @@ function AppShell() {
               <label className="block text-xs font-bold mb-1 text-theme-primary">
                 {movementForm.movement_type === 'ADJUSTMENT'
                   ? `How many ${selectedProduct?.unit} on the shelf?`
-                  : `How many ${selectedProduct?.unit}?`}
+                  : ['DAMAGED', 'EXPIRED', 'MISSING'].includes(movementForm.movement_type)
+                  ? `How many ${selectedProduct?.unit} written off?`
+                  : `How many ${selectedProduct?.unit} added?`}
               </label>
               <input
                 type="number"
@@ -3400,6 +3516,41 @@ function AppShell() {
           handleInitiateCheckout();
         }}
         formatNaira={formatNaira}
+      />
+
+      {/* BULK PRODUCT IMPORT MODAL (CSV & EXCEL) */}
+      <BulkImportModal
+        isOpen={showBulkImportModal}
+        onClose={() => setShowBulkImportModal(false)}
+        apiFetch={apiFetch}
+        formatCurrency={formatNaira}
+        toastSuccess={(msg) => showSuccessToast(msg)}
+        toastError={(msg) => toastError?.(msg) || alert(msg)}
+        onImportSuccess={() => fetchAllData()}
+      />
+
+      {/* PHYSICAL STOCK COUNT & SHELF AUDIT MODAL */}
+      <PhysicalStockAuditModal
+        isOpen={showAuditModal}
+        onClose={() => setShowAuditModal(false)}
+        products={products}
+        apiFetch={apiFetch}
+        formatCurrency={formatNaira}
+        toastSuccess={(msg) => showSuccessToast(msg)}
+        toastError={(msg) => toastError?.(msg) || alert(msg)}
+        onReconcileSuccess={() => fetchAllData()}
+      />
+
+      {/* QUICK MULTI-PRODUCT BATCH ADJUSTMENT MODAL */}
+      <BatchAdjustModal
+        isOpen={showBatchAdjustModal}
+        onClose={() => setShowBatchAdjustModal(false)}
+        products={products}
+        apiFetch={apiFetch}
+        formatCurrency={formatNaira}
+        toastSuccess={(msg) => showSuccessToast(msg)}
+        toastError={(msg) => toastError?.(msg) || alert(msg)}
+        onSuccess={() => fetchAllData()}
       />
 
       {/* DISCRETIONARY MVP MODAL 6: SMART MARKET RESTOCK BUYING LIST GENERATOR */}

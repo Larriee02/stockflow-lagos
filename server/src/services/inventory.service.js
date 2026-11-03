@@ -248,7 +248,8 @@ class InventoryService {
       let newStock = previousStock;
       let unitPrice = 0;
 
-      switch (movement_type) {
+      const normalizedType = String(movement_type || '').toUpperCase();
+      switch (normalizedType) {
         case 'SALE':
           if (inputQty <= 0) throw new AppError('Sale quantity must be greater than zero.');
           if (previousStock < inputQty) {
@@ -264,12 +265,40 @@ class InventoryService {
           break;
 
         case 'DAMAGE':
+        case 'DAMAGED':
           if (inputQty <= 0) throw new AppError('Damaged quantity must be greater than zero.');
           if (previousStock < inputQty) {
             throw new AppError(`Damaged quantity cannot exceed current stock (${previousStock}).`);
           }
           quantityChange = -inputQty;
           newStock = previousStock - inputQty;
+          unitPrice = Number(product.cost_price);
+          break;
+
+        case 'EXPIRED':
+          if (inputQty <= 0) throw new AppError('Expired quantity must be greater than zero.');
+          if (previousStock < inputQty) {
+            throw new AppError(`Expired quantity cannot exceed current stock (${previousStock}).`);
+          }
+          quantityChange = -inputQty;
+          newStock = previousStock - inputQty;
+          unitPrice = Number(product.cost_price);
+          break;
+
+        case 'MISSING':
+          if (inputQty <= 0) throw new AppError('Missing quantity must be greater than zero.');
+          if (previousStock < inputQty) {
+            throw new AppError(`Missing quantity cannot exceed current stock (${previousStock}).`);
+          }
+          quantityChange = -inputQty;
+          newStock = previousStock - inputQty;
+          unitPrice = Number(product.cost_price);
+          break;
+
+        case 'SURPLUS':
+          if (inputQty <= 0) throw new AppError('Surplus quantity must be greater than zero.');
+          quantityChange = inputQty;
+          newStock = previousStock + inputQty;
           unitPrice = Number(product.cost_price);
           break;
 
@@ -308,7 +337,7 @@ class InventoryService {
           userId,
           idempotency_key || null,
           product_id,
-          movement_type,
+          normalizedType === 'DAMAGE' ? 'DAMAGED' : normalizedType,
           quantityChange,
           previousStock,
           newStock,
@@ -367,6 +396,375 @@ class InventoryService {
 
   async getRecentMovements(userId, limit) {
     return inventoryRepo.findRecentMovements(userId, limit);
+  }
+
+  /**
+   * Bulk Product Import from CSV or Excel data
+   */
+  async bulkImportProducts(userId, payload) {
+    const { products: rawProducts, updateExisting = true } = payload || {};
+    if (!Array.isArray(rawProducts) || rawProducts.length === 0) {
+      throw new AppError('No products provided for import.', 400);
+    }
+
+    const result = await db.withTransaction(async (client) => {
+      let importedCount = 0;
+      let updatedCount = 0;
+      let skippedCount = 0;
+      const processedProducts = [];
+
+      // Fetch all existing products for this user once for fast memory matching
+      const existingRes = await client.query(
+        'SELECT * FROM products WHERE user_id = $1',
+        [userId]
+      );
+      const existingMapBySku = new Map();
+      const existingMapByName = new Map();
+      for (const p of existingRes.rows) {
+        if (p.sku) existingMapBySku.set(String(p.sku).trim().toUpperCase(), p);
+        if (p.name) existingMapByName.set(String(p.name).trim().toLowerCase(), p);
+      }
+
+      for (let i = 0; i < rawProducts.length; i++) {
+        const row = rawProducts[i];
+        const name = String(row.name || '').trim();
+        if (!name) {
+          skippedCount++;
+          continue;
+        }
+
+        const sku = String(
+          row.sku || `SKU-${Date.now().toString().slice(-4)}-${i + 1}`
+        )
+          .trim()
+          .toUpperCase();
+        const category = String(row.category || 'Provisions').trim();
+        const unit = String(row.unit || 'Pack').trim();
+        const costPrice = Math.max(0, Number(row.cost_price || 0));
+        const sellingPrice = Math.max(0, Number(row.selling_price || 0));
+        const stockQty = Math.max(0, Number(row.stock_quantity || 0));
+        const reorderLevel = Math.max(0, Number(row.reorder_level ?? 5));
+        const supplierName = row.supplier_name ? String(row.supplier_name).trim() : null;
+
+        const existing =
+          existingMapBySku.get(sku) ||
+          existingMapByName.get(name.toLowerCase());
+
+        if (existing) {
+          if (!updateExisting) {
+            skippedCount++;
+            continue;
+          }
+
+          const prevStock = Number(existing.stock_quantity);
+          const stockDiff = stockQty - prevStock;
+
+          const updateRes = await client.query(
+            `UPDATE products
+             SET name = $1, category = $2, unit = $3, cost_price = $4,
+                 selling_price = $5, stock_quantity = $6, reorder_level = $7,
+                 supplier_name = $8, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $9 AND user_id = $10
+             RETURNING *`,
+            [
+              name,
+              category,
+              unit,
+              costPrice,
+              sellingPrice,
+              stockQty,
+              reorderLevel,
+              supplierName,
+              existing.id,
+              userId,
+            ]
+          );
+
+          if (stockDiff !== 0) {
+            const movementType = stockDiff > 0 ? 'RESTOCK' : 'ADJUSTMENT';
+            await client.query(
+              `INSERT INTO stock_movements (
+                user_id, product_id, movement_type, quantity_change,
+                previous_stock, new_stock, unit_price, total_value,
+                counterparty_name, note
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [
+                userId,
+                existing.id,
+                movementType,
+                stockDiff,
+                prevStock,
+                stockQty,
+                costPrice,
+                multiplyCurrency(costPrice, Math.abs(stockDiff)),
+                supplierName || 'Bulk Import Update',
+                'Bulk CSV/Excel Inventory Adjustment',
+              ]
+            );
+          }
+
+          updatedCount++;
+          processedProducts.push(updateRes.rows[0]);
+        } else {
+          const insertRes = await client.query(
+            `INSERT INTO products (
+              user_id, sku, name, category, unit, cost_price,
+              selling_price, stock_quantity, reorder_level, supplier_name
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING *`,
+            [
+              userId,
+              sku,
+              name,
+              category,
+              unit,
+              costPrice,
+              sellingPrice,
+              stockQty,
+              reorderLevel,
+              supplierName,
+            ]
+          );
+
+          const newProd = insertRes.rows[0];
+          if (stockQty > 0) {
+            await client.query(
+              `INSERT INTO stock_movements (
+                user_id, product_id, movement_type, quantity_change,
+                previous_stock, new_stock, unit_price, total_value,
+                counterparty_name, note
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [
+                userId,
+                newProd.id,
+                'RESTOCK',
+                stockQty,
+                0,
+                stockQty,
+                costPrice,
+                multiplyCurrency(costPrice, stockQty),
+                supplierName || 'Initial Shelf Setup',
+                'Initial Bulk Import',
+              ]
+            );
+          }
+
+          importedCount++;
+          processedProducts.push(newProd);
+        }
+      }
+
+      return {
+        importedCount,
+        updatedCount,
+        skippedCount,
+        totalCount: processedProducts.length,
+        products: processedProducts,
+      };
+    });
+
+    cacheService.invalidatePrefix(`dashboard:${userId}`);
+    return result;
+  }
+
+  /**
+   * Fast Batch Stock Adjustment for multiple products at once
+   */
+  async batchStockAdjustment(userId, payload) {
+    const { adjustments } = payload || {};
+    if (!Array.isArray(adjustments) || adjustments.length === 0) {
+      throw new AppError('No adjustments provided.', 400);
+    }
+
+    const result = await db.withTransaction(async (client) => {
+      let updatedCount = 0;
+      let totalValueChange = 0;
+      const movements = [];
+
+      for (const adj of adjustments) {
+        const productId = Number(adj.product_id);
+        const qtyInput = Number(adj.quantity);
+        const mode = adj.mode === 'SET_COUNT' ? 'SET_COUNT' : 'DELTA';
+        const movementType = String(adj.movement_type || 'ADJUSTMENT').toUpperCase();
+        const note = String(adj.note || '').trim() || 'Batch Stock Adjustment';
+
+        if (!productId || Number.isNaN(qtyInput)) continue;
+
+        const prodRes = await client.query(
+          'SELECT * FROM products WHERE id = $1 AND user_id = $2 FOR UPDATE',
+          [productId, userId]
+        );
+        if (prodRes.rows.length === 0) continue;
+
+        const prod = prodRes.rows[0];
+        const prevStock = Number(prod.stock_quantity);
+        let newStock = prevStock;
+        let qtyChange = 0;
+
+        if (mode === 'SET_COUNT') {
+          if (qtyInput < 0) throw new AppError(`Shelf count for "${prod.name}" cannot be negative.`);
+          newStock = qtyInput;
+          qtyChange = newStock - prevStock;
+        } else {
+          // DELTA mode
+          if (['DAMAGED', 'DAMAGE', 'EXPIRED', 'MISSING'].includes(movementType)) {
+            const deductQty = Math.abs(qtyInput);
+            if (prevStock < deductQty) {
+              throw new AppError(`Deduction for "${prod.name}" (${deductQty}) exceeds stock (${prevStock}).`);
+            }
+            newStock = prevStock - deductQty;
+            qtyChange = -deductQty;
+          } else if (movementType === 'RESTOCK' || movementType === 'SURPLUS') {
+            const addQty = Math.abs(qtyInput);
+            newStock = prevStock + addQty;
+            qtyChange = addQty;
+          } else {
+            newStock = prevStock + qtyInput;
+            qtyChange = qtyInput;
+            if (newStock < 0) {
+              throw new AppError(`Stock for "${prod.name}" cannot drop below 0.`);
+            }
+          }
+        }
+
+        if (qtyChange === 0) continue;
+
+        const unitPrice = Number(prod.cost_price || 0);
+        const lineTotal = multiplyCurrency(unitPrice, Math.abs(qtyChange));
+        totalValueChange += lineTotal;
+
+        await client.query(
+          'UPDATE products SET stock_quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3',
+          [newStock, productId, userId]
+        );
+
+        const movRes = await client.query(
+          `INSERT INTO stock_movements (
+            user_id, product_id, movement_type, quantity_change,
+            previous_stock, new_stock, unit_price, total_value,
+            counterparty_name, note
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING *`,
+          [
+            userId,
+            productId,
+            movementType === 'DAMAGE' ? 'DAMAGED' : movementType,
+            qtyChange,
+            prevStock,
+            newStock,
+            unitPrice,
+            lineTotal,
+            adj.counterparty_name || null,
+            note,
+          ]
+        );
+
+        movements.push(movRes.rows[0]);
+        updatedCount++;
+      }
+
+      return {
+        updatedCount,
+        totalValueChange,
+        movements,
+      };
+    });
+
+    cacheService.invalidatePrefix(`dashboard:${userId}`);
+    return result;
+  }
+
+  /**
+   * Physical Stock Count Reconciliation Workflow
+   * Compares expected stock against actual shelf counts and tags discrepancy reasons
+   */
+  async batchPhysicalStockCount(userId, payload) {
+    const { counts, auditNote = 'Physical Shelf Audit' } = payload || {};
+    if (!Array.isArray(counts) || counts.length === 0) {
+      throw new AppError('No stock counts provided.', 400);
+    }
+
+    const result = await db.withTransaction(async (client) => {
+      let totalAudited = 0;
+      let balancedCount = 0;
+      let discrepancyCount = 0;
+      let totalDiscrepancyValue = 0;
+      const movements = [];
+
+      for (const item of counts) {
+        const productId = Number(item.product_id);
+        const actualCount = Number(item.actual_count);
+        const reason = String(item.reason || 'ADJUSTMENT').toUpperCase();
+        const note = String(item.note || auditNote).trim();
+
+        if (!productId || Number.isNaN(actualCount) || actualCount < 0) continue;
+
+        const prodRes = await client.query(
+          'SELECT * FROM products WHERE id = $1 AND user_id = $2 FOR UPDATE',
+          [productId, userId]
+        );
+        if (prodRes.rows.length === 0) continue;
+
+        const prod = prodRes.rows[0];
+        const prevStock = Number(prod.stock_quantity);
+        const variance = actualCount - prevStock;
+        totalAudited++;
+
+        if (variance === 0) {
+          balancedCount++;
+          continue;
+        }
+
+        discrepancyCount++;
+        const unitPrice = Number(prod.cost_price || 0);
+        const lineTotal = multiplyCurrency(unitPrice, Math.abs(variance));
+        totalDiscrepancyValue += lineTotal;
+
+        // Auto-assign clean movement type if not provided
+        let movementType = reason;
+        if (!['DAMAGED', 'EXPIRED', 'MISSING', 'SURPLUS', 'ADJUSTMENT'].includes(movementType)) {
+          movementType = variance > 0 ? 'SURPLUS' : 'MISSING';
+        }
+
+        await client.query(
+          'UPDATE products SET stock_quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND user_id = $3',
+          [actualCount, productId, userId]
+        );
+
+        const movRes = await client.query(
+          `INSERT INTO stock_movements (
+            user_id, product_id, movement_type, quantity_change,
+            previous_stock, new_stock, unit_price, total_value,
+            counterparty_name, note
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Shelf Audit', $9)
+          RETURNING *`,
+          [
+            userId,
+            productId,
+            movementType,
+            variance,
+            prevStock,
+            actualCount,
+            unitPrice,
+            lineTotal,
+            note ? `${note} (Variance: ${variance > 0 ? `+${variance}` : variance})` : 'Physical Stock Audit',
+          ]
+        );
+
+        movements.push(movRes.rows[0]);
+      }
+
+      return {
+        totalAudited,
+        balancedCount,
+        discrepancyCount,
+        totalDiscrepancyValue,
+        movements,
+      };
+    });
+
+    cacheService.invalidatePrefix(`dashboard:${userId}`);
+    return result;
   }
 }
 
