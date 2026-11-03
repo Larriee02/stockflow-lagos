@@ -37,6 +37,7 @@ import { Modal } from './components/ui/Modal';
 import { StatCard } from './components/ui/StatCard';
 import { Badge } from './components/ui/Badge';
 import { EmptyState } from './components/ui/EmptyState';
+import { ToastProvider, useToast } from './components/ui/Toast';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
@@ -107,7 +108,9 @@ const TAB_TO_ROUTE = {
 export default function App() {
   return (
     <RouterProvider>
-      <AppShell />
+      <ToastProvider>
+        <AppShell />
+      </ToastProvider>
     </RouterProvider>
   );
 }
@@ -230,11 +233,13 @@ function AppShell() {
     note: '',
   });
   const [cashForm, setCashForm] = useState(INITIAL_CASH_FORM);
+  const { success: toastSuccess } = useToast();
 
   const showSuccessToast = useCallback((msg) => {
     setToast(msg);
+    toastSuccess?.(msg);
     setTimeout(() => setToast(''), 4200);
-  }, []);
+  }, [toastSuccess]);
 
   const handleSelectTab = (tabId, scrollOnMobile = false) => {
     setActiveTab(tabId);
