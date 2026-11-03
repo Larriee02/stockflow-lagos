@@ -16,10 +16,10 @@ class CashbookRepository {
       ),
       cash AS (
         SELECT
-          COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW'), 0)::numeric(14,2) AS total_inflow,
-          COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW'), 0)::numeric(14,2) AS total_outflow,
-          COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW' AND transaction_date >= CURRENT_DATE), 0)::numeric(14,2) AS today_inflow,
-          COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW' AND transaction_date >= CURRENT_DATE), 0)::numeric(14,2) AS today_outflow
+          COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE'), 0)::numeric(14,2) AS total_inflow,
+          COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE'), 0)::numeric(14,2) AS total_outflow,
+          COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE' AND transaction_date >= CURRENT_DATE), 0)::numeric(14,2) AS today_inflow,
+          COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE' AND transaction_date >= CURRENT_DATE), 0)::numeric(14,2) AS today_outflow
         FROM cash_transactions
         WHERE user_id = $1
       ),
@@ -59,14 +59,14 @@ class CashbookRepository {
       `
       SELECT
         payment_method,
-        COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW'), 0)::numeric(14,2) AS inflow,
-        COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW'), 0)::numeric(14,2) AS outflow,
+        COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE'), 0)::numeric(14,2) AS inflow,
+        COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE'), 0)::numeric(14,2) AS outflow,
         (
-          COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW'), 0) -
-          COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW'), 0)
+          COALESCE(SUM(amount) FILTER (WHERE type = 'INFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE'), 0) -
+          COALESCE(SUM(amount) FILTER (WHERE type = 'OUTFLOW' AND COALESCE(status, 'ACTIVE') = 'ACTIVE'), 0)
         )::numeric(14,2) AS net
       FROM cash_transactions
-      WHERE user_id = $1
+      WHERE user_id = $1 AND COALESCE(status, 'ACTIVE') = 'ACTIVE'
       GROUP BY payment_method
       ORDER BY net DESC
     `,
@@ -80,7 +80,10 @@ class CashbookRepository {
     };
   }
 
-  async findTransactions(userId, { type, paymentMethod, search, limit = 100 } = {}) {
+  async findTransactions(
+    userId,
+    { type, paymentMethod, category, status, startDate, endDate, search, limit = 500 } = {}
+  ) {
     const conditions = ['user_id = $1'];
     const params = [userId];
 
@@ -92,14 +95,40 @@ class CashbookRepository {
       params.push(paymentMethod);
       conditions.push(`payment_method = $${params.length}`);
     }
+    if (category && category !== 'ALL') {
+      params.push(category);
+      conditions.push(`category = $${params.length}`);
+    }
+    if (status && status !== 'ALL') {
+      params.push(status);
+      conditions.push(`COALESCE(status, 'ACTIVE') = $${params.length}`);
+    }
+    if (startDate) {
+      const startStr = String(startDate).trim();
+      const startIso =
+        startStr.length <= 10
+          ? new Date(`${startStr}T00:00:00.000Z`).toISOString()
+          : new Date(startStr).toISOString();
+      params.push(startIso);
+      conditions.push(`transaction_date >= $${params.length}`);
+    }
+    if (endDate) {
+      const endStr = String(endDate).trim();
+      const endIso =
+        endStr.length <= 10
+          ? new Date(`${endStr}T23:59:59.999Z`).toISOString()
+          : new Date(endStr).toISOString();
+      params.push(endIso);
+      conditions.push(`transaction_date <= $${params.length}`);
+    }
     if (search) {
       params.push(`%${search.trim()}%`);
       conditions.push(
-        `(description ILIKE $${params.length} OR category ILIKE $${params.length} OR COALESCE(counterparty_name, '') ILIKE $${params.length})`
+        `(description ILIKE $${params.length} OR category ILIKE $${params.length} OR COALESCE(counterparty_name, '') ILIKE $${params.length} OR COALESCE(expense_reason, '') ILIKE $${params.length} OR COALESCE(correction_reason, '') ILIKE $${params.length})`
       );
     }
 
-    params.push(Number(limit) || 100);
+    params.push(Number(limit) || 500);
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     const { rows } = await db.query(
@@ -112,19 +141,26 @@ class CashbookRepository {
     return rows;
   }
 
-  async createTransaction(userId, data) {
+  async createTransaction(userId, data, client = db) {
     if (data.idempotency_key) {
-      const existing = await db.query(
+      const existing = await client.query(
         'SELECT * FROM cash_transactions WHERE user_id = $1 AND idempotency_key = $2',
         [userId, data.idempotency_key]
       );
       if (existing.rows.length > 0) return existing.rows[0];
     }
 
-    const { rows } = await db.query(
+    const expenseReason = data.expense_reason
+      ? String(data.expense_reason).trim()
+      : data.type === 'OUTFLOW'
+      ? String(data.description || data.category || '').trim()
+      : null;
+
+    const { rows } = await client.query(
       `INSERT INTO cash_transactions (
-        user_id, idempotency_key, type, category, amount, payment_method, counterparty_name, description
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        user_id, idempotency_key, type, category, amount, payment_method,
+        counterparty_name, description, expense_reason, status, parent_transaction_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10)
       RETURNING *`,
       [
         userId,
@@ -135,17 +171,112 @@ class CashbookRepository {
         data.payment_method || 'CASH',
         data.counterparty_name?.trim() || null,
         data.description.trim(),
+        expenseReason,
+        data.parent_transaction_id || null,
       ]
     );
     return rows[0];
   }
 
-  async deleteTransaction(userId, id) {
-    const { rowCount } = await db.query(
-      'DELETE FROM cash_transactions WHERE id = $1 AND user_id = $2',
-      [id, userId]
+  async findSessions(userId, limit = 30) {
+    const { rows } = await db.query(
+      `SELECT * FROM cashbook_sessions
+       WHERE user_id = $1
+       ORDER BY session_date DESC
+       LIMIT $2`,
+      [userId, Number(limit) || 30]
     );
-    return rowCount > 0;
+    return rows;
+  }
+
+  async findSessionByDate(userId, dateStr, client = db) {
+    const { rows } = await client.query(
+      `SELECT * FROM cashbook_sessions WHERE user_id = $1 AND session_date = $2`,
+      [userId, dateStr]
+    );
+    return rows[0] || null;
+  }
+
+  async upsertOpeningSession(userId, data, client = db) {
+    const {
+      session_date,
+      opening_balance = 0,
+      opening_cash = 0,
+      opening_bank_pos = 0,
+      opening_note = null,
+    } = data;
+
+    const { rows } = await client.query(
+      `INSERT INTO cashbook_sessions (
+        user_id, session_date, opening_balance, opening_cash, opening_bank_pos, opening_note, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'OPEN')
+      ON CONFLICT (user_id, session_date)
+      DO UPDATE SET
+        opening_balance = EXCLUDED.opening_balance,
+        opening_cash = EXCLUDED.opening_cash,
+        opening_bank_pos = EXCLUDED.opening_bank_pos,
+        opening_note = EXCLUDED.opening_note,
+        status = 'OPEN'
+      RETURNING *`,
+      [
+        userId,
+        session_date,
+        Number(opening_balance),
+        Number(opening_cash),
+        Number(opening_bank_pos),
+        opening_note,
+      ]
+    );
+    return rows[0];
+  }
+
+  async closeSession(userId, data, client = db) {
+    const {
+      session_date,
+      opening_balance = 0,
+      opening_cash = 0,
+      opening_bank_pos = 0,
+      expected_closing_balance = 0,
+      actual_closing_balance = 0,
+      actual_closing_cash = 0,
+      actual_closing_bank_pos = 0,
+      variance = 0,
+      closing_note = null,
+    } = data;
+
+    const { rows } = await client.query(
+      `INSERT INTO cashbook_sessions (
+        user_id, session_date, opening_balance, opening_cash, opening_bank_pos,
+        expected_closing_balance, actual_closing_balance, actual_closing_cash,
+        actual_closing_bank_pos, variance, closing_note, status, closed_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'CLOSED', CURRENT_TIMESTAMP)
+      ON CONFLICT (user_id, session_date)
+      DO UPDATE SET
+        opening_balance = EXCLUDED.opening_balance,
+        expected_closing_balance = EXCLUDED.expected_closing_balance,
+        actual_closing_balance = EXCLUDED.actual_closing_balance,
+        actual_closing_cash = EXCLUDED.actual_closing_cash,
+        actual_closing_bank_pos = EXCLUDED.actual_closing_bank_pos,
+        variance = EXCLUDED.variance,
+        closing_note = EXCLUDED.closing_note,
+        status = 'CLOSED',
+        closed_at = CURRENT_TIMESTAMP
+      RETURNING *`,
+      [
+        userId,
+        session_date,
+        Number(opening_balance),
+        Number(opening_cash),
+        Number(opening_bank_pos),
+        Number(expected_closing_balance),
+        Number(actual_closing_balance),
+        Number(actual_closing_cash),
+        Number(actual_closing_bank_pos),
+        Number(variance),
+        closing_note,
+      ]
+    );
+    return rows[0];
   }
 
   async findCredits(userId, { status } = {}) {

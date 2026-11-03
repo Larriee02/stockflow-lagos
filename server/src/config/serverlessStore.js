@@ -16,6 +16,7 @@ function buildInitialState() {
     products: [],
     stock_movements: [],
     cash_transactions: [],
+    cashbook_sessions: [],
     credit_records: [],
   };
 }
@@ -89,6 +90,9 @@ function loadState() {
   try {
     if (fs.existsSync(STORE_FILE)) {
       memoryState = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+      if (!Array.isArray(memoryState.cashbook_sessions)) {
+        memoryState.cashbook_sessions = [];
+      }
       if (ensureOwner(memoryState)) saveState(memoryState);
       return memoryState;
     }
@@ -607,7 +611,9 @@ async function executeQuery(text, params = []) {
     const uid = Number(params[0]);
     const todayStr = new Date().toISOString().slice(0, 10);
     const prods = state.products.filter((p) => Number(p.user_id) === uid);
-    const txs = state.cash_transactions.filter((t) => Number(t.user_id) === uid);
+    const txs = state.cash_transactions.filter(
+      (t) => Number(t.user_id) === uid && (t.status || 'ACTIVE') === 'ACTIVE'
+    );
     const creds = state.credit_records.filter(
       (c) => Number(c.user_id) === uid && c.status === 'OWING'
     );
@@ -685,10 +691,12 @@ async function executeQuery(text, params = []) {
     return { rows, rowCount: rows.length };
   }
 
-  if (upper.includes('FROM CASH_TRANSACTIONS WHERE USER_ID = $1 GROUP BY PAYMENT_METHOD')) {
+  if (upper.includes('FROM CASH_TRANSACTIONS') && upper.includes('GROUP BY PAYMENT_METHOD')) {
     const uid = Number(params[0]);
     const map = {};
-    for (const t of state.cash_transactions.filter((x) => Number(x.user_id) === uid)) {
+    for (const t of state.cash_transactions.filter(
+      (x) => Number(x.user_id) === uid && (x.status || 'ACTIVE') === 'ACTIVE'
+    )) {
       const m = t.payment_method || 'CASH';
       if (!map[m]) map[m] = { payment_method: m, inflow: 0, outflow: 0 };
       if (t.type === 'INFLOW') map[m].inflow += Number(t.amount);
@@ -1009,6 +1017,14 @@ async function executeQuery(text, params = []) {
     return { rows: [], rowCount: 1 };
   }
 
+  if (upper.startsWith('SELECT * FROM CASH_TRANSACTIONS WHERE ID = $1 AND USER_ID = $2')) {
+    const [id, uid] = params;
+    const found = state.cash_transactions.find(
+      (t) => Number(t.id) === Number(id) && Number(t.user_id) === Number(uid)
+    );
+    return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
+  }
+
   if (upper.startsWith('SELECT * FROM CASH_TRANSACTIONS WHERE USER_ID = $1 AND IDEMPOTENCY_KEY = $2')) {
     const [uid, key] = params;
     const found = state.cash_transactions.find(
@@ -1020,10 +1036,50 @@ async function executeQuery(text, params = []) {
   if (upper.startsWith('SELECT * FROM CASH_TRANSACTIONS')) {
     const uid = Number(params[0]);
     let list = state.cash_transactions.filter((t) => Number(t.user_id) === uid);
-    const tVal = params.find((p) => p === 'INFLOW' || p === 'OUTFLOW');
-    if (tVal) list = list.filter((t) => t.type === tVal);
-    const mVal = params.find((p) => ['CASH', 'POS', 'BANK_TRANSFER', 'MOBILE_MONEY'].includes(p));
-    if (mVal) list = list.filter((t) => t.payment_method === mVal);
+
+    let pIdx = 1;
+    if (upper.includes('TYPE = $')) {
+      const tVal = params[pIdx++];
+      list = list.filter((t) => t.type === tVal);
+    }
+    if (upper.includes('PAYMENT_METHOD = $')) {
+      const mVal = params[pIdx++];
+      list = list.filter((t) => t.payment_method === mVal);
+    }
+    if (upper.includes('CATEGORY = $')) {
+      const cVal = params[pIdx++];
+      list = list.filter((t) => t.category === cVal);
+    }
+    if (upper.includes("COALESCE(STATUS, 'ACTIVE') = $")) {
+      const sVal = params[pIdx++];
+      list = list.filter((t) => (t.status || 'ACTIVE') === sVal);
+    }
+    if (upper.includes('TRANSACTION_DATE >= $')) {
+      const startIso = params[pIdx++];
+      const startMs = new Date(startIso).getTime();
+      list = list.filter((t) => new Date(t.transaction_date).getTime() >= startMs);
+    }
+    if (upper.includes('TRANSACTION_DATE <= $')) {
+      const endIso = params[pIdx++];
+      const endMs = new Date(endIso).getTime();
+      list = list.filter((t) => new Date(t.transaction_date).getTime() <= endMs);
+    }
+    if (upper.includes('DESCRIPTION ILIKE $')) {
+      const rawSearch = String(params[pIdx++] || '')
+        .replace(/^%|%$/g, '')
+        .toLowerCase();
+      if (rawSearch) {
+        list = list.filter(
+          (t) =>
+            (t.description && t.description.toLowerCase().includes(rawSearch)) ||
+            (t.category && t.category.toLowerCase().includes(rawSearch)) ||
+            (t.counterparty_name && t.counterparty_name.toLowerCase().includes(rawSearch)) ||
+            (t.expense_reason && t.expense_reason.toLowerCase().includes(rawSearch)) ||
+            (t.correction_reason && t.correction_reason.toLowerCase().includes(rawSearch))
+        );
+      }
+    }
+
     list.sort(
       (a, b) => new Date(b.transaction_date) - new Date(a.transaction_date) || b.id - a.id
     );
@@ -1045,6 +1101,12 @@ async function executeQuery(text, params = []) {
         payment_method,
         counterparty_name,
         description,
+        expense_reason: null,
+        status: 'ACTIVE',
+        parent_transaction_id: null,
+        replaced_by_id: null,
+        correction_reason: null,
+        corrected_at: null,
         stock_movement_id,
         transaction_date: new Date().toISOString(),
       };
@@ -1060,6 +1122,44 @@ async function executeQuery(text, params = []) {
         payment_method,
         counterparty_name,
         description,
+        expense_reason: null,
+        status: 'ACTIVE',
+        parent_transaction_id: null,
+        replaced_by_id: null,
+        correction_reason: null,
+        corrected_at: null,
+        stock_movement_id: null,
+        transaction_date: new Date().toISOString(),
+      };
+    } else if (params.length === 10) {
+      const [
+        user_id,
+        idempotency_key,
+        type,
+        category,
+        amount,
+        payment_method,
+        counterparty_name,
+        description,
+        expense_reason,
+        parent_transaction_id,
+      ] = params;
+      tx = {
+        id: nextId(state.cash_transactions),
+        user_id: Number(user_id),
+        idempotency_key,
+        type,
+        category,
+        amount: Number(amount),
+        payment_method,
+        counterparty_name,
+        description,
+        expense_reason: expense_reason || null,
+        status: 'ACTIVE',
+        parent_transaction_id: parent_transaction_id ? Number(parent_transaction_id) : null,
+        replaced_by_id: null,
+        correction_reason: null,
+        corrected_at: null,
         stock_movement_id: null,
         transaction_date: new Date().toISOString(),
       };
@@ -1085,6 +1185,12 @@ async function executeQuery(text, params = []) {
         payment_method,
         counterparty_name,
         description,
+        expense_reason: type === 'OUTFLOW' ? description : null,
+        status: 'ACTIVE',
+        parent_transaction_id: null,
+        replaced_by_id: null,
+        correction_reason: null,
+        corrected_at: null,
         stock_movement_id,
         transaction_date: new Date().toISOString(),
       };
@@ -1109,6 +1215,12 @@ async function executeQuery(text, params = []) {
         payment_method,
         counterparty_name,
         description,
+        expense_reason: type === 'OUTFLOW' ? description : null,
+        status: 'ACTIVE',
+        parent_transaction_id: null,
+        replaced_by_id: null,
+        correction_reason: null,
+        corrected_at: null,
         stock_movement_id: null,
         transaction_date: new Date().toISOString(),
       };
@@ -1116,6 +1228,148 @@ async function executeQuery(text, params = []) {
     state.cash_transactions.push(tx);
     saveState(state);
     return { rows: [tx], rowCount: 1 };
+  }
+
+  if (upper.startsWith('UPDATE CASH_TRANSACTIONS')) {
+    if (upper.includes("SET STATUS = 'VOIDED'")) {
+      const [correction_reason, id, uid] = params;
+      const tx = state.cash_transactions.find(
+        (t) => Number(t.id) === Number(id) && Number(t.user_id) === Number(uid)
+      );
+      if (!tx) return { rows: [], rowCount: 0 };
+      tx.status = 'VOIDED';
+      tx.correction_reason = correction_reason;
+      tx.corrected_at = new Date().toISOString();
+      saveState(state);
+      return { rows: [tx], rowCount: 1 };
+    }
+    if (upper.includes("SET STATUS = 'CORRECTED'")) {
+      const [correction_reason, replaced_by_id, id, uid] = params;
+      const tx = state.cash_transactions.find(
+        (t) => Number(t.id) === Number(id) && Number(t.user_id) === Number(uid)
+      );
+      if (!tx) return { rows: [], rowCount: 0 };
+      tx.status = 'CORRECTED';
+      tx.correction_reason = correction_reason;
+      tx.replaced_by_id = Number(replaced_by_id);
+      tx.corrected_at = new Date().toISOString();
+      saveState(state);
+      return { rows: [tx], rowCount: 1 };
+    }
+  }
+
+  if (upper.startsWith('SELECT * FROM CASHBOOK_SESSIONS')) {
+    const uid = Number(params[0]);
+    if (!Array.isArray(state.cashbook_sessions)) state.cashbook_sessions = [];
+    if (upper.includes('AND SESSION_DATE = $2')) {
+      const dateStr = String(params[1]).slice(0, 10);
+      const found = state.cashbook_sessions.find(
+        (s) => Number(s.user_id) === uid && String(s.session_date).slice(0, 10) === dateStr
+      );
+      return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
+    }
+    const limit = Number(params[1]) || 30;
+    const list = state.cashbook_sessions
+      .filter((s) => Number(s.user_id) === uid)
+      .sort((a, b) => String(b.session_date).localeCompare(String(a.session_date)))
+      .slice(0, limit);
+    return { rows: list, rowCount: list.length };
+  }
+
+  if (upper.startsWith('INSERT INTO CASHBOOK_SESSIONS')) {
+    if (!Array.isArray(state.cashbook_sessions)) state.cashbook_sessions = [];
+    if (upper.includes("'CLOSED'")) {
+      const [
+        user_id,
+        session_date,
+        opening_balance,
+        opening_cash,
+        opening_bank_pos,
+        expected_closing_balance,
+        actual_closing_balance,
+        actual_closing_cash,
+        actual_closing_bank_pos,
+        variance,
+        closing_note,
+      ] = params;
+      const dateKey = String(session_date).slice(0, 10);
+      let sess = state.cashbook_sessions.find(
+        (s) => Number(s.user_id) === Number(user_id) && String(s.session_date).slice(0, 10) === dateKey
+      );
+      const now = new Date().toISOString();
+      if (sess) {
+        sess.opening_balance = Number(opening_balance);
+        sess.opening_cash = Number(opening_cash);
+        sess.opening_bank_pos = Number(opening_bank_pos);
+        sess.expected_closing_balance = Number(expected_closing_balance);
+        sess.actual_closing_balance = Number(actual_closing_balance);
+        sess.actual_closing_cash = Number(actual_closing_cash);
+        sess.actual_closing_bank_pos = Number(actual_closing_bank_pos);
+        sess.variance = Number(variance);
+        sess.closing_note = closing_note;
+        sess.status = 'CLOSED';
+        sess.closed_at = now;
+      } else {
+        sess = {
+          id: nextId(state.cashbook_sessions),
+          user_id: Number(user_id),
+          session_date: dateKey,
+          opening_balance: Number(opening_balance),
+          opening_cash: Number(opening_cash),
+          opening_bank_pos: Number(opening_bank_pos),
+          opening_note: null,
+          expected_closing_balance: Number(expected_closing_balance),
+          actual_closing_balance: Number(actual_closing_balance),
+          actual_closing_cash: Number(actual_closing_cash),
+          actual_closing_bank_pos: Number(actual_closing_bank_pos),
+          variance: Number(variance),
+          closing_note,
+          status: 'CLOSED',
+          opened_at: now,
+          closed_at: now,
+        };
+        state.cashbook_sessions.push(sess);
+      }
+      saveState(state);
+      return { rows: [sess], rowCount: 1 };
+    } else {
+      const [user_id, session_date, opening_balance, opening_cash, opening_bank_pos, opening_note] =
+        params;
+      const dateKey = String(session_date).slice(0, 10);
+      let sess = state.cashbook_sessions.find(
+        (s) => Number(s.user_id) === Number(user_id) && String(s.session_date).slice(0, 10) === dateKey
+      );
+      const now = new Date().toISOString();
+      if (sess) {
+        sess.opening_balance = Number(opening_balance);
+        sess.opening_cash = Number(opening_cash);
+        sess.opening_bank_pos = Number(opening_bank_pos);
+        sess.opening_note = opening_note;
+        sess.status = 'OPEN';
+      } else {
+        sess = {
+          id: nextId(state.cashbook_sessions),
+          user_id: Number(user_id),
+          session_date: dateKey,
+          opening_balance: Number(opening_balance),
+          opening_cash: Number(opening_cash),
+          opening_bank_pos: Number(opening_bank_pos),
+          opening_note,
+          expected_closing_balance: null,
+          actual_closing_balance: null,
+          actual_closing_cash: null,
+          actual_closing_bank_pos: null,
+          variance: null,
+          closing_note: null,
+          status: 'OPEN',
+          opened_at: now,
+          closed_at: null,
+        };
+        state.cashbook_sessions.push(sess);
+      }
+      saveState(state);
+      return { rows: [sess], rowCount: 1 };
+    }
   }
 
   if (upper.startsWith('DELETE FROM CASH_TRANSACTIONS WHERE ID = $1 AND USER_ID = $2')) {

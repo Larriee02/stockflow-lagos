@@ -494,12 +494,56 @@ app.post(
   })
 );
 
+app.post(
+  '/api/v1/transactions/:id/correct',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const result = await cashbookService.correctTransaction(
+      req.user.id,
+      req.params.id,
+      req.body
+    );
+    res.json(result);
+  })
+);
+
 app.delete(
   '/api/v1/transactions/:id',
   requireApprovedUser,
   asyncHandler(async (req, res) => {
-    const result = await cashbookService.deleteTransaction(req.user.id, req.params.id);
+    const result = await cashbookService.deleteTransaction(
+      req.user.id,
+      req.params.id,
+      req.body?.reason
+    );
     res.json(result);
+  })
+);
+
+app.get(
+  '/api/v1/cashbook/sessions',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const data = await cashbookService.getCashbookSessions(req.user.id, req.query);
+    res.json(data);
+  })
+);
+
+app.post(
+  '/api/v1/cashbook/sessions/open',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const session = await cashbookService.openCashbookSession(req.user.id, req.body);
+    res.json(session);
+  })
+);
+
+app.post(
+  '/api/v1/cashbook/sessions/close',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const session = await cashbookService.closeCashbookSession(req.user.id, req.body);
+    res.json(session);
   })
 );
 

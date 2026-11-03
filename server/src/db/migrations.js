@@ -177,4 +177,42 @@ module.exports = [
         CHECK (movement_type IN ('SALE', 'RESTOCK', 'ADJUSTMENT', 'DAMAGE', 'DAMAGED', 'EXPIRED', 'MISSING', 'SURPLUS'));
     `,
   },
+  {
+    id: '005_cashbook_audit_and_sessions',
+    sql: `
+      ALTER TABLE cash_transactions
+        ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'
+          CHECK (status IN ('ACTIVE', 'VOIDED', 'CORRECTED')),
+        ADD COLUMN IF NOT EXISTS expense_reason TEXT,
+        ADD COLUMN IF NOT EXISTS correction_reason TEXT,
+        ADD COLUMN IF NOT EXISTS parent_transaction_id INTEGER REFERENCES cash_transactions(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS replaced_by_id INTEGER REFERENCES cash_transactions(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMPTZ;
+
+      CREATE INDEX IF NOT EXISTS idx_cash_user_status_date
+        ON cash_transactions (user_id, status, transaction_date DESC);
+
+      CREATE TABLE IF NOT EXISTS cashbook_sessions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        opening_balance NUMERIC(14, 2) NOT NULL DEFAULT 0,
+        opening_cash NUMERIC(14, 2) NOT NULL DEFAULT 0,
+        opening_bank_pos NUMERIC(14, 2) NOT NULL DEFAULT 0,
+        opening_note TEXT,
+        expected_closing_balance NUMERIC(14, 2),
+        actual_closing_balance NUMERIC(14, 2),
+        actual_closing_cash NUMERIC(14, 2),
+        actual_closing_bank_pos NUMERIC(14, 2),
+        variance NUMERIC(14, 2),
+        closing_note TEXT,
+        status VARCHAR(20) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CLOSED')),
+        opened_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        closed_at TIMESTAMPTZ
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_cashbook_sessions_user_date
+        ON cashbook_sessions (user_id, session_date);
+    `,
+  },
 ];

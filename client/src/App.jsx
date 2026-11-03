@@ -35,6 +35,13 @@ import {
   SlidersHorizontal,
   Layers,
   FileSpreadsheet,
+  Banknote,
+  CreditCard,
+  Landmark,
+  Smartphone,
+  Lock,
+  Unlock,
+  RotateCcw,
 } from 'lucide-react';
 import { useDebounce } from './hooks/useDebounce';
 import { Modal } from './components/ui/Modal';
@@ -48,6 +55,8 @@ import { MobileCartSheet } from './components/counter/MobileCartSheet';
 import { BulkImportModal } from './components/inventory/BulkImportModal';
 import { PhysicalStockAuditModal } from './components/inventory/PhysicalStockAuditModal';
 import { BatchAdjustModal } from './components/inventory/BatchAdjustModal';
+import { CashbookSessionModal } from './components/cashbook/CashbookSessionModal';
+import { TransactionCorrectionModal } from './components/cashbook/TransactionCorrectionModal';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
@@ -58,7 +67,7 @@ import { apiFetch, setStoredToken } from './services/api';
 import { formatCurrency, getCurrencySymbol } from './utils/currency';
 
 const PAYMENT_CHANNEL_LABELS = {
-  CASH: 'Cash',
+  CASH: 'Cash (Notes)',
   POS: 'POS Terminal',
   BANK_TRANSFER: 'Bank Transfer',
   MOBILE_MONEY: 'Mobile Wallet',
@@ -70,9 +79,12 @@ const LAGOS_EXPENSE_PRESETS = [
   'Electricity & Utilities',
   'Logistics & Transport',
   'Store Rent & Lease',
+  'Staff Wages & Allowance',
   'POS & Bank Charges',
   'Security & Maintenance',
   'Packaging & Supplies',
+  'Taxes & Market Levies',
+  'Miscellaneous Expense',
 ];
 
 const INITIAL_PRODUCT_FORM = {
@@ -93,6 +105,7 @@ const INITIAL_CASH_FORM = {
   amount: '',
   payment_method: 'CASH',
   counterparty_name: '',
+  expense_reason: '',
   description: '',
 };
 
@@ -181,6 +194,7 @@ function AppShell() {
   const [dashboard, setDashboard] = useState({});
   const [products, setProducts] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const [cashbookSession, setCashbookSession] = useState(null);
   const [movements, setMovements] = useState([]);
   const [credits, setCredits] = useState([]);
 
@@ -199,6 +213,13 @@ function AppShell() {
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [cashFilter, setCashFilter] = useState('ALL');
   const [channelFilter, setChannelFilter] = useState('ALL');
+  const [cashDateRange, setCashDateRange] = useState('ALL'); // 'ALL' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'CUSTOM'
+  const [cashStartDate, setCashStartDate] = useState('');
+  const [cashEndDate, setCashEndDate] = useState('');
+  const [cashCategoryFilter, setCashCategoryFilter] = useState('ALL');
+  const [cashSearch, setCashSearch] = useState('');
+  const debouncedCashSearch = useDebounce(cashSearch, 150);
+  const [showAuditTrail, setShowAuditTrail] = useState(true);
 
   // Check History Filters
   const [historyTypeFilter, setHistoryTypeFilter] = useState('ALL');
@@ -215,6 +236,9 @@ function AppShell() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [showCashModal, setShowCashModal] = useState(false);
+  const [showSessionModal, setShowSessionModal] = useState(false);
+  const [sessionModalMode, setSessionModalMode] = useState('OPEN');
+  const [correctingTx, setCorrectingTx] = useState(null);
   const [repayingCredit, setRepayingCredit] = useState(null);
   const [repayAmount, setRepayAmount] = useState('');
   const [repayMethod, setRepayMethod] = useState('CASH');
@@ -319,14 +343,11 @@ function AppShell() {
       if (!isApprovedStoreAccess) return;
       try {
         setError('');
-        const txParams = new URLSearchParams();
-        if (cashFilter !== 'ALL') txParams.set('type', cashFilter);
-        if (channelFilter !== 'ALL') txParams.set('paymentMethod', channelFilter);
-
-        const [dashData, prodData, txData, movData, credData] = await Promise.all([
+        const [dashData, prodData, txData, sessData, movData, credData] = await Promise.all([
           apiFetch('/api/v1/dashboard', { signal }),
           apiFetch('/api/v1/products', { signal }),
-          apiFetch(`/api/v1/transactions?${txParams.toString()}`, { signal }),
+          apiFetch('/api/v1/transactions?limit=500', { signal }),
+          apiFetch('/api/v1/cashbook/sessions', { signal }).catch(() => null),
           apiFetch('/api/v1/inventory/movements?limit=250', { signal }),
           apiFetch('/api/v1/credits', { signal }),
         ]);
@@ -334,6 +355,7 @@ function AppShell() {
         setDashboard(dashData || {});
         setProducts(Array.isArray(prodData) ? prodData : []);
         setTransactions(Array.isArray(txData) ? txData : []);
+        if (sessData) setCashbookSession(sessData);
         setMovements(Array.isArray(movData) ? movData : []);
         setCredits(Array.isArray(credData) ? credData : []);
       } catch (err) {
@@ -348,7 +370,7 @@ function AppShell() {
         setLoading(false);
       }
     },
-    [cashFilter, channelFilter, isApprovedStoreAccess, checkAuthSession]
+    [isApprovedStoreAccess, checkAuthSession]
   );
 
   useEffect(() => {
@@ -515,6 +537,220 @@ function AppShell() {
         return { variant: 'neutral', label: norm };
     }
   };
+
+  // Distinct Payment Channel Visual Metadata (Cash vs POS vs Bank Transfer vs Mobile Wallet)
+  const getChannelBadgeMeta = (paymentMethod) => {
+    const ch = String(paymentMethod || 'CASH').toUpperCase();
+    switch (ch) {
+      case 'CASH':
+        return {
+          label: 'Cash (Notes)',
+          shortLabel: 'CASH',
+          icon: Banknote,
+          variant: 'success',
+          pillClass: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/35',
+        };
+      case 'POS':
+        return {
+          label: 'POS Terminal',
+          shortLabel: 'POS',
+          icon: CreditCard,
+          variant: 'info',
+          pillClass: 'bg-sky-500/15 text-sky-400 border-sky-500/35',
+        };
+      case 'BANK_TRANSFER':
+        return {
+          label: 'Bank Transfer',
+          shortLabel: 'TRANSFER',
+          icon: Landmark,
+          variant: 'info',
+          pillClass: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/35',
+        };
+      case 'MOBILE_MONEY':
+        return {
+          label: 'Mobile Wallet',
+          shortLabel: 'WALLET',
+          icon: Smartphone,
+          variant: 'warning',
+          pillClass: 'bg-amber-500/15 text-amber-400 border-amber-500/35',
+        };
+      default:
+        return {
+          label: ch,
+          shortLabel: ch,
+          icon: Wallet,
+          variant: 'neutral',
+          pillClass: 'bg-slate-800 text-slate-300 border-slate-700',
+        };
+    }
+  };
+
+  // Cashbook Period Boundaries (Daily, Weekly, Monthly, Custom, All)
+  const cashPeriodBounds = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (cashDateRange === 'DAILY') {
+      return { startMs: startOfToday, endMs: Infinity, label: 'Daily Report (Today)' };
+    }
+    if (cashDateRange === 'WEEKLY') {
+      return {
+        startMs: startOfToday - 6 * 86400000,
+        endMs: Infinity,
+        label: 'Weekly Report (Last 7 Days)',
+      };
+    }
+    if (cashDateRange === 'MONTHLY') {
+      return {
+        startMs: startOfToday - 29 * 86400000,
+        endMs: Infinity,
+        label: 'Monthly Report (Last 30 Days)',
+      };
+    }
+    if (cashDateRange === 'CUSTOM') {
+      const sMs = cashStartDate ? new Date(cashStartDate).setHours(0, 0, 0, 0) : -Infinity;
+      const eMs = cashEndDate ? new Date(cashEndDate).setHours(23, 59, 59, 999) : Infinity;
+      return {
+        startMs: sMs,
+        endMs: eMs,
+        label: `Custom Range (${cashStartDate || 'Start'} to ${cashEndDate || 'Now'})`,
+      };
+    }
+    return { startMs: -Infinity, endMs: Infinity, label: 'All-Time Cashbook Report' };
+  }, [cashDateRange, cashStartDate, cashEndDate]);
+
+  // Distinct Cashbook Categories for Filter Dropdown
+  const cashbookCategories = useMemo(() => {
+    const set = new Set(LAGOS_EXPENSE_PRESETS);
+    set.add('Counter Sales');
+    set.add('Credit Repayment');
+    transactions.forEach((tx) => {
+      if (tx.category) set.add(tx.category);
+    });
+    return ['ALL', ...Array.from(set)];
+  }, [transactions]);
+
+  // Filtered Cashbook Transactions (supports Type, Channel, Category, Date Range, Search & Audit Trail)
+  const filteredTransactions = useMemo(() => {
+    const q = debouncedCashSearch.toLowerCase().trim();
+    const { startMs, endMs } = cashPeriodBounds;
+
+    return transactions.filter((tx) => {
+      const txStatus = tx.status || 'ACTIVE';
+      if (!showAuditTrail && txStatus !== 'ACTIVE') return false;
+
+      if (cashFilter !== 'ALL' && tx.type !== cashFilter) return false;
+      if (channelFilter !== 'ALL' && tx.payment_method !== channelFilter) return false;
+      if (cashCategoryFilter !== 'ALL' && tx.category !== cashCategoryFilter) return false;
+
+      const txTime = new Date(tx.transaction_date).getTime();
+      if (txTime < startMs || txTime > endMs) return false;
+
+      if (!q) return true;
+      return (
+        (tx.category && tx.category.toLowerCase().includes(q)) ||
+        (tx.description && tx.description.toLowerCase().includes(q)) ||
+        (tx.expense_reason && tx.expense_reason.toLowerCase().includes(q)) ||
+        (tx.counterparty_name && tx.counterparty_name.toLowerCase().includes(q)) ||
+        (tx.correction_reason && tx.correction_reason.toLowerCase().includes(q)) ||
+        String(tx.id).includes(q)
+      );
+    });
+  }, [
+    transactions,
+    showAuditTrail,
+    cashFilter,
+    channelFilter,
+    cashCategoryFilter,
+    cashPeriodBounds,
+    debouncedCashSearch,
+  ]);
+
+  // Comprehensive Period Cashbook Report (Opening Balance, Inflow, Outflow, Closing Balance, Channels & Expense Breakdown)
+  const cashbookReportSummary = useMemo(() => {
+    const { startMs, endMs } = cashPeriodBounds;
+    let priorNet = 0;
+    let periodInflow = 0;
+    let periodOutflow = 0;
+    let activeCount = 0;
+    let auditCount = 0;
+
+    const byChannel = {
+      CASH: { inflow: 0, outflow: 0, net: 0, count: 0 },
+      POS: { inflow: 0, outflow: 0, net: 0, count: 0 },
+      BANK_TRANSFER: { inflow: 0, outflow: 0, net: 0, count: 0 },
+      MOBILE_MONEY: { inflow: 0, outflow: 0, net: 0, count: 0 },
+    };
+
+    const expenseCatMap = {};
+
+    for (const tx of transactions) {
+      const txStatus = tx.status || 'ACTIVE';
+      const txTime = new Date(tx.transaction_date).getTime();
+      const amt = Number(tx.amount || 0);
+
+      if (txStatus !== 'ACTIVE') {
+        if (txTime >= startMs && txTime <= endMs) {
+          auditCount++;
+        }
+        continue;
+      }
+
+      if (txTime < startMs) {
+        priorNet += tx.type === 'INFLOW' ? amt : -amt;
+        continue;
+      }
+
+      if (txTime >= startMs && txTime <= endMs) {
+        activeCount++;
+        const ch = byChannel[tx.payment_method] ? tx.payment_method : 'CASH';
+        byChannel[ch].count += 1;
+
+        if (tx.type === 'INFLOW') {
+          periodInflow += amt;
+          byChannel[ch].inflow += amt;
+          byChannel[ch].net += amt;
+        } else {
+          periodOutflow += amt;
+          byChannel[ch].outflow += amt;
+          byChannel[ch].net -= amt;
+
+          const cat = tx.category || 'Miscellaneous Expense';
+          if (!expenseCatMap[cat]) {
+            expenseCatMap[cat] = { category: cat, amount: 0, count: 0 };
+          }
+          expenseCatMap[cat].amount += amt;
+          expenseCatMap[cat].count += 1;
+        }
+      }
+    }
+
+    // Determine effective Opening Balance for the selected period
+    let openingBalance = priorNet;
+    if (
+      cashDateRange === 'DAILY' &&
+      cashbookSession?.todaySession?.opening_balance !== undefined &&
+      cashbookSession?.todaySession?.opening_balance !== null
+    ) {
+      openingBalance = Number(cashbookSession.todaySession.opening_balance);
+    } else if (cashDateRange === 'ALL' && cashbookSession?.todaySession?.opening_balance) {
+      // Include any initial float difference if explicitly set
+      openingBalance = 0;
+    }
+
+    const closingBalance = openingBalance + periodInflow - periodOutflow;
+    const expensesByCategory = Object.values(expenseCatMap).sort((a, b) => b.amount - a.amount);
+
+    return {
+      openingBalance,
+      periodInflow,
+      periodOutflow,
+      closingBalance,
+      activeCount,
+      auditCount,
+      byChannel,
+      expensesByCategory,
+    };
+  }, [transactions, cashPeriodBounds, cashDateRange, cashbookSession]);
 
   // Cart Calculations
   const cartItems = useMemo(() => {
@@ -822,13 +1058,19 @@ function AppShell() {
   // Record Direct Cash Entry
   const handleCreateCashTx = async (e) => {
     e.preventDefault();
+    const reasonText = (cashForm.expense_reason || cashForm.description || '').trim();
+    if (cashForm.type === 'OUTFLOW' && !reasonText) {
+      toastWarning?.('Please enter a specific reason or purpose for this expense.');
+      return;
+    }
     setSubmitting(true);
     try {
       await apiFetch('/api/v1/transactions', {
         method: 'POST',
         body: JSON.stringify({
           ...cashForm,
-          description: cashForm.description.trim() || cashForm.category,
+          expense_reason: reasonText || cashForm.category,
+          description: reasonText || cashForm.category,
           idempotency_key: `cash-${Date.now()}`,
         }),
       });
@@ -869,16 +1111,9 @@ function AppShell() {
     }
   };
 
-  const handleDeleteCashTx = async (id) => {
-    if (!window.confirm('Delete this cashbook entry?')) return;
-    try {
-      await apiFetch(`/api/v1/transactions/${id}`, {
-        method: 'DELETE',
-      });
-      fetchAllData();
-    } catch {
-      alert('Could not delete transaction.');
-    }
+  // Opens Audit-Safe Correction / Void Modal instead of permanently deleting financial records
+  const handleOpenCorrectTx = (tx) => {
+    setCorrectingTx(tx);
   };
 
   // Update Store Profile
@@ -2062,170 +2297,637 @@ function AppShell() {
 
         {/* TAB 3: MONEY IN & MONEY OUT (CASHBOOK) */}
         {activeTab === 'cashbook' && (
-          <div className="liquid-glass rounded-3xl overflow-hidden">
-            <div
-              style={{ borderColor: 'var(--border-outer)' }}
-              className="p-3.5 sm:p-4 border-b flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3"
-            >
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { id: 'ALL', label: 'All Money' },
-                  { id: 'INFLOW', label: 'Money In' },
-                  { id: 'OUTFLOW', label: 'Money Out' },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => setCashFilter(t.id)}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
-                      cashFilter === t.id ? 'liquid-btn-primary' : 'liquid-glass-subtle'
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+          <div className="space-y-4">
+            {/* 1. DAILY OPENING & CLOSING BALANCE REGISTER BAR */}
+            <div className="liquid-glass p-4 rounded-3xl flex flex-col lg:flex-row lg:items-center justify-between gap-3 border border-emerald-500/20">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-extrabold font-luxury text-sm sm:text-base text-theme-primary">
+                      Daily Cash Register ({cashbookSession?.targetDate || new Date().toISOString().slice(0, 10)})
+                    </span>
+                    <Badge
+                      variant={
+                        cashbookSession?.todaySession?.status === 'CLOSED' ? 'success' : 'info'
+                      }
+                    >
+                      {cashbookSession?.todaySession?.status === 'CLOSED'
+                        ? 'RECONCILED & CLOSED'
+                        : 'REGISTER OPEN'}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-theme-secondary mt-1 tabular-nums">
+                    <span>
+                      Opening Float:{' '}
+                      <strong className="text-theme-primary">
+                        {formatNaira(cashbookSession?.effectiveOpeningBalance || 0)}
+                      </strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Today In:{' '}
+                      <strong className="text-theme-inflow">
+                        +{formatNaira(cashbookSession?.dayInflow || 0)}
+                      </strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Today Out:{' '}
+                      <strong className="text-theme-outflow">
+                        -{formatNaira(cashbookSession?.dayOutflow || 0)}
+                      </strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Expected Closing:{' '}
+                      <strong className="text-sky-400">
+                        {formatNaira(cashbookSession?.expectedClosingBalance || 0)}
+                      </strong>
+                    </span>
+                    {cashbookSession?.todaySession?.status === 'CLOSED' && (
+                      <>
+                        <span>•</span>
+                        <span>
+                          Counted Closing:{' '}
+                          <strong className="text-emerald-400">
+                            {formatNaira(cashbookSession?.todaySession?.actual_closing_balance || 0)}
+                          </strong>
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <select
-                value={channelFilter}
-                onChange={(e) => setChannelFilter(e.target.value)}
-                className="liquid-input text-xs rounded-2xl px-3.5 py-2 font-bold"
-              >
-                <option value="ALL">All Payment Methods</option>
-                <option value="CASH">Cash (Naira Notes)</option>
-                <option value="POS">POS (Moniepoint / OPay)</option>
-                <option value="BANK_TRANSFER">Bank Transfer</option>
-                <option value="MOBILE_MONEY">Mobile Wallet / USSD</option>
-              </select>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSessionModalMode('OPEN');
+                    setShowSessionModal(true);
+                  }}
+                  className="liquid-glass-subtle px-3.5 py-2 rounded-2xl text-xs font-bold text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 cursor-pointer hover:bg-emerald-500/10"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  Opening Balance
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSessionModalMode('CLOSE');
+                    setShowSessionModal(true);
+                  }}
+                  className="liquid-btn-primary px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  Reconcile & Close Day
+                </button>
+              </div>
             </div>
 
-            {transactions.length === 0 ? (
-              <EmptyState
-                icon={Wallet}
-                title="No cashbook entries recorded yet"
-                description="Sales at the counter, market restocks, and shop expenses will automatically appear here."
-              />
-            ) : (
-              <>
-                {/* Mobile Card View (< 768px) */}
-                <div className="md:hidden divide-y theme-divider">
-                  {transactions.map((tx) => (
-                    <div key={tx.id} className="p-4 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <Badge
-                          variant={tx.type === 'INFLOW' ? 'success' : 'danger'}
-                          icon={tx.type === 'INFLOW' ? ArrowUpRight : ArrowDownRight}
-                        >
-                          {tx.type === 'INFLOW' ? 'MONEY IN' : 'MONEY OUT'}
-                        </Badge>
-                        <span
-                          className={`text-base font-extrabold font-luxury tabular-nums ${
-                            tx.type === 'INFLOW'
-                              ? 'text-theme-inflow'
-                              : 'text-theme-outflow'
-                          }`}
-                        >
-                          {tx.type === 'INFLOW' ? '+' : '-'}
-                          {formatNaira(tx.amount)}
-                        </span>
-                      </div>
-                      <div className="font-bold text-sm text-theme-primary">
-                        {tx.category}
-                      </div>
-                      <div className="text-xs text-theme-secondary">
-                        {tx.counterparty_name ? `${tx.counterparty_name}: ` : ''}
-                        {tx.description}
-                      </div>
-                      <div className="flex items-center justify-between pt-1 text-[11px]">
-                        <Badge variant="neutral">
-                          {PAYMENT_CHANNEL_LABELS[tx.payment_method] || tx.payment_method}
-                        </Badge>
-                        <span className="text-theme-secondary">
-                          {new Date(tx.transaction_date).toLocaleString()}
-                        </span>
-                      </div>
+            {/* 2. PERIOD BALANCE & REPORT SUMMARY CARDS (OPENING -> INFLOW -> OUTFLOW -> CLOSING) */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="liquid-glass p-4 rounded-2xl">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-theme-secondary">
+                  Period Opening Balance
+                </p>
+                <p className="text-lg sm:text-xl font-extrabold font-luxury tabular-nums mt-1 text-theme-primary">
+                  {formatNaira(cashbookReportSummary.openingBalance)}
+                </p>
+                <p className="text-[11px] mt-0.5 text-theme-secondary truncate">
+                  {cashPeriodBounds.label}
+                </p>
+              </div>
+
+              <div className="liquid-glass p-4 rounded-2xl">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-theme-secondary">
+                  Period Money In (+)
+                </p>
+                <p className="text-lg sm:text-xl font-extrabold font-luxury tabular-nums mt-1 text-theme-inflow">
+                  +{formatNaira(cashbookReportSummary.periodInflow)}
+                </p>
+                <p className="text-[11px] mt-0.5 text-theme-secondary">
+                  Sales, repayments & inflows
+                </p>
+              </div>
+
+              <div className="liquid-glass p-4 rounded-2xl">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-theme-secondary">
+                  Period Expenses & Out (-)
+                </p>
+                <p className="text-lg sm:text-xl font-extrabold font-luxury tabular-nums mt-1 text-theme-outflow">
+                  -{formatNaira(cashbookReportSummary.periodOutflow)}
+                </p>
+                <p className="text-[11px] mt-0.5 text-theme-secondary">
+                  Across {cashbookReportSummary.expensesByCategory.length} expense category(s)
+                </p>
+              </div>
+
+              <div className="liquid-glass p-4 rounded-2xl border border-sky-500/25">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-sky-400">
+                  Period Closing Balance
+                </p>
+                <p className="text-lg sm:text-xl font-extrabold font-luxury tabular-nums mt-1 text-sky-300">
+                  {formatNaira(cashbookReportSummary.closingBalance)}
+                </p>
+                <p className="text-[11px] mt-0.5 text-theme-secondary">
+                  Opening + Inflow − Outflow
+                </p>
+              </div>
+            </div>
+
+            {/* 3. PAYMENT CHANNEL BREAKDOWN CARDS (CASH vs POS vs BANK TRANSFER vs MOBILE WALLET) */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {['CASH', 'POS', 'BANK_TRANSFER', 'MOBILE_MONEY'].map((chKey) => {
+                const meta = getChannelBadgeMeta(chKey);
+                const chStats = cashbookReportSummary.byChannel[chKey] || {
+                  inflow: 0,
+                  outflow: 0,
+                  net: 0,
+                  count: 0,
+                };
+                const Icon = meta.icon;
+                const isSelected = channelFilter === chKey;
+                return (
+                  <button
+                    type="button"
+                    key={chKey}
+                    onClick={() => setChannelFilter(isSelected ? 'ALL' : chKey)}
+                    className={`liquid-glass p-3 rounded-2xl text-left transition-all cursor-pointer border ${
+                      isSelected
+                        ? 'border-emerald-400 ring-1 ring-emerald-400/40'
+                        : 'border-transparent hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-bold border ${meta.pillClass}`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        {meta.label}
+                      </span>
+                      <span className="text-[10px] font-bold text-theme-secondary">
+                        {chStats.count} tx
+                      </span>
                     </div>
-                  ))}
+                    <div className="text-sm sm:text-base font-extrabold font-luxury tabular-nums text-theme-primary">
+                      {formatNaira(chStats.net)}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-theme-secondary mt-1 tabular-nums">
+                      <span className="text-theme-inflow">In: +{formatNaira(chStats.inflow)}</span>
+                      <span className="text-theme-outflow">Out: -{formatNaira(chStats.outflow)}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 4. EXPENSE BREAKDOWN BY CATEGORY STRIP (WHEN EXPENSES EXIST IN PERIOD) */}
+            {cashbookReportSummary.expensesByCategory.length > 0 && (
+              <div className="liquid-glass px-4 py-3 rounded-2xl flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-theme-secondary mr-1">
+                  Expenses by Category:
+                </span>
+                {cashbookReportSummary.expensesByCategory.map((exp) => (
+                  <button
+                    type="button"
+                    key={exp.category}
+                    onClick={() =>
+                      setCashCategoryFilter(
+                        cashCategoryFilter === exp.category ? 'ALL' : exp.category
+                      )
+                    }
+                    className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                      cashCategoryFilter === exp.category
+                        ? 'liquid-btn-primary'
+                        : 'liquid-glass-subtle hover:opacity-90'
+                    }`}
+                  >
+                    <span>{exp.category}:</span>
+                    <span className="text-theme-outflow tabular-nums">
+                      {formatNaira(exp.amount)}
+                    </span>
+                    <span className="text-[10px] opacity-70">({exp.count})</span>
+                  </button>
+                ))}
+                {cashCategoryFilter !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => setCashCategoryFilter('ALL')}
+                    className="text-xs font-bold text-emerald-400 hover:underline ml-1 cursor-pointer"
+                  >
+                    Reset Category
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* 5. MAIN CASHBOOK LEDGER & FILTERS */}
+            <div className="liquid-glass rounded-3xl overflow-hidden">
+              <div
+                style={{ borderColor: 'var(--border-outer)' }}
+                className="p-3.5 sm:p-4 border-b space-y-3"
+              >
+                {/* Row 1: Date Range Report Presets (Daily, Weekly, Monthly, Custom, All) & Type Filter */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-theme-secondary mr-1">
+                      Report Period:
+                    </span>
+                    {[
+                      { id: 'ALL', label: 'All Time' },
+                      { id: 'DAILY', label: 'Daily (Today)' },
+                      { id: 'WEEKLY', label: 'Weekly (7d)' },
+                      { id: 'MONTHLY', label: 'Monthly (30d)' },
+                      { id: 'CUSTOM', label: 'Custom Range' },
+                    ].map((p) => (
+                      <button
+                        type="button"
+                        key={p.id}
+                        onClick={() => {
+                          setCashDateRange(p.id);
+                          if (p.id !== 'CUSTOM') {
+                            setCashStartDate('');
+                            setCashEndDate('');
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                          cashDateRange === p.id ? 'liquid-btn-primary' : 'liquid-glass-subtle'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+
+                    {cashDateRange === 'CUSTOM' && (
+                      <div className="flex items-center gap-1.5 bg-slate-900/60 p-1 rounded-xl border border-slate-800 text-xs">
+                        <span className="text-[11px] text-theme-secondary">From:</span>
+                        <input
+                          type="date"
+                          value={cashStartDate}
+                          onChange={(e) => setCashStartDate(e.target.value)}
+                          className="liquid-input text-xs rounded-lg px-2 py-1"
+                        />
+                        <span className="text-[11px] text-theme-secondary">To:</span>
+                        <input
+                          type="date"
+                          value={cashEndDate}
+                          onChange={(e) => setCashEndDate(e.target.value)}
+                          className="liquid-input text-xs rounded-lg px-2 py-1"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { id: 'ALL', label: 'All Money' },
+                      { id: 'INFLOW', label: 'Money In (+)' },
+                      { id: 'OUTFLOW', label: 'Expenses Out (-)' },
+                    ].map((t) => (
+                      <button
+                        type="button"
+                        key={t.id}
+                        onClick={() => setCashFilter(t.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                          cashFilter === t.id ? 'liquid-btn-primary' : 'liquid-glass-subtle'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                {/* Desktop Table View (>= 768px) */}
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead
-                      style={{
-                        backgroundColor: 'var(--bg-subtle)',
-                        borderColor: 'var(--border-outer)',
-                      }}
-                      className="border-b text-[11px] font-bold uppercase tracking-wider text-theme-secondary"
+                {/* Row 2: Payment Channel Pills, Category Select, Search, Audit Trail Toggle & Export */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t theme-divider">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { id: 'ALL', label: 'All Channels' },
+                      { id: 'CASH', label: 'Cash' },
+                      { id: 'POS', label: 'POS' },
+                      { id: 'BANK_TRANSFER', label: 'Bank Transfer' },
+                      { id: 'MOBILE_MONEY', label: 'Mobile Wallet' },
+                    ].map((ch) => (
+                      <button
+                        type="button"
+                        key={ch.id}
+                        onClick={() => setChannelFilter(ch.id)}
+                        className={`px-2.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                          channelFilter === ch.id
+                            ? 'liquid-btn-primary'
+                            : 'liquid-glass-subtle'
+                        }`}
+                      >
+                        {ch.label}
+                      </button>
+                    ))}
+
+                    <select
+                      value={cashCategoryFilter}
+                      onChange={(e) => setCashCategoryFilter(e.target.value)}
+                      className="liquid-input text-xs rounded-xl px-2.5 py-1.5 font-bold max-w-[175px]"
                     >
-                      <tr>
-                        <th className="py-3.5 px-4">Date & Time</th>
-                        <th className="py-3.5 px-4">Type</th>
-                        <th className="py-3.5 px-4">Category</th>
-                        <th className="py-3.5 px-4">Details</th>
-                        <th className="py-3.5 px-4">Payment Channel</th>
-                        <th className="py-3.5 px-4 text-right">Amount ({currencySymbol})</th>
-                        <th className="py-3.5 px-4 text-right"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y theme-divider">
-                      {transactions.map((tx) => (
-                        <tr
+                      {cashbookCategories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat === 'ALL' ? 'All Categories' : cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 flex-1 justify-end">
+                    <div className="relative flex-1 min-w-[180px] max-w-xs">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-theme-secondary" />
+                      <input
+                        type="text"
+                        placeholder="Search reason, category, payer..."
+                        value={cashSearch}
+                        onChange={(e) => setCashSearch(e.target.value)}
+                        className="liquid-input w-full pl-8 pr-3 py-1.5 text-xs rounded-xl"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowAuditTrail(!showAuditTrail)}
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer ${
+                        showAuditTrail
+                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          : 'liquid-glass-subtle text-theme-secondary'
+                      }`}
+                      title="Toggle visibility of corrected and voided audit trail entries"
+                    >
+                      <History className="w-3.5 h-3.5" />
+                      <span>Audit Trail</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        exportToCSV(
+                          filteredTransactions,
+                          `cashbook-${cashDateRange.toLowerCase()}-${new Date()
+                            .toISOString()
+                            .slice(0, 10)}.csv`
+                        )
+                      }
+                      className="liquid-glass-subtle flex items-center justify-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl hover:opacity-80 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" /> CSV
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {filteredTransactions.length === 0 ? (
+                <EmptyState
+                  icon={Wallet}
+                  title="No cashbook entries match your current filter"
+                  description="Try switching to 'All Time' or 'All Channels', or record a new shop expense or sale."
+                  actionLabel="Reset Cashbook Filters"
+                  onAction={() => {
+                    setCashFilter('ALL');
+                    setChannelFilter('ALL');
+                    setCashDateRange('ALL');
+                    setCashStartDate('');
+                    setCashEndDate('');
+                    setCashCategoryFilter('ALL');
+                    setCashSearch('');
+                    setShowAuditTrail(true);
+                  }}
+                />
+              ) : (
+                <>
+                  {/* Mobile Card View (< 768px) */}
+                  <div className="md:hidden divide-y theme-divider">
+                    {filteredTransactions.map((tx) => {
+                      const txStatus = tx.status || 'ACTIVE';
+                      const isInactive = txStatus !== 'ACTIVE';
+                      const chMeta = getChannelBadgeMeta(tx.payment_method);
+                      const ChIcon = chMeta.icon;
+                      const reasonText = tx.expense_reason || tx.description;
+
+                      return (
+                        <div
                           key={tx.id}
-                          className="hover:bg-white/30 dark:hover:bg-white/5"
+                          className={`p-4 space-y-2 ${isInactive ? 'opacity-60 bg-slate-950/30' : ''}`}
                         >
-                          <td className="py-3.5 px-4 text-xs tabular-nums text-theme-secondary">
-                            {new Date(tx.transaction_date).toLocaleString()}
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <Badge
-                              variant={tx.type === 'INFLOW' ? 'success' : 'danger'}
-                              icon={tx.type === 'INFLOW' ? ArrowUpRight : ArrowDownRight}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Badge
+                                variant={tx.type === 'INFLOW' ? 'success' : 'danger'}
+                                icon={tx.type === 'INFLOW' ? ArrowUpRight : ArrowDownRight}
+                              >
+                                {tx.type === 'INFLOW' ? 'MONEY IN' : 'EXPENSE'}
+                              </Badge>
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold border ${chMeta.pillClass}`}
+                              >
+                                <ChIcon className="w-3 h-3" />
+                                {chMeta.label}
+                              </span>
+                              {tx.parent_transaction_id && (
+                                <Badge variant="info">
+                                  AMENDED (Replaces #{tx.parent_transaction_id})
+                                </Badge>
+                              )}
+                              {txStatus === 'CORRECTED' && (
+                                <Badge variant="warning">
+                                  SUPERSEDED {tx.replaced_by_id ? `→ #${tx.replaced_by_id}` : ''}
+                                </Badge>
+                              )}
+                              {txStatus === 'VOIDED' && (
+                                <Badge variant="danger">VOIDED</Badge>
+                              )}
+                            </div>
+
+                            <span
+                              className={`text-base font-extrabold font-luxury tabular-nums ${
+                                isInactive
+                                  ? 'line-through text-slate-500'
+                                  : tx.type === 'INFLOW'
+                                  ? 'text-theme-inflow'
+                                  : 'text-theme-outflow'
+                              }`}
                             >
-                              {tx.type === 'INFLOW' ? 'MONEY IN' : 'MONEY OUT'}
-                            </Badge>
-                          </td>
-                          <td className="py-3.5 px-4 font-extrabold font-luxury text-theme-primary">
-                            {tx.category}
-                          </td>
-                          <td className="py-3.5 px-4 text-theme-secondary">
+                              {tx.type === 'INFLOW' ? '+' : '-'}
+                              {formatNaira(tx.amount)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-extrabold text-sm text-theme-primary">
+                              {tx.category}
+                            </span>
+                            <span className="text-[11px] font-mono text-theme-secondary">
+                              #{tx.id}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-theme-secondary">
                             {tx.counterparty_name ? (
                               <strong className="text-theme-primary">
                                 {tx.counterparty_name}:{' '}
                               </strong>
                             ) : null}
-                            {tx.description}
-                          </td>
-                          <td className="py-3.5 px-4">
-                            <Badge variant="neutral">
-                              {PAYMENT_CHANNEL_LABELS[tx.payment_method] || tx.payment_method}
-                            </Badge>
-                          </td>
-                          <td
-                            className={`py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums ${
-                              tx.type === 'INFLOW'
-                                ? 'text-theme-inflow'
-                                : 'text-theme-outflow'
-                            }`}
-                          >
-                            {tx.type === 'INFLOW' ? '+' : '-'}
-                            {formatNaira(tx.amount)}
-                          </td>
-                          <td className="py-3.5 px-4 text-right">
-                            <button
-                              onClick={() => handleDeleteCashTx(tx.id)}
-                              title="Delete cash entry"
-                              className="p-1 text-theme-secondary hover:text-rose-500 cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
+                            {reasonText}
+                          </div>
+
+                          {tx.correction_reason && (
+                            <div className="text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-2.5 py-1">
+                              <strong>Audit Note:</strong> {tx.correction_reason}
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between pt-1 text-[11px]">
+                            <span className="text-theme-secondary">
+                              {new Date(tx.transaction_date).toLocaleString()}
+                            </span>
+                            {!isInactive && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCorrectTx(tx)}
+                                className="liquid-glass-subtle px-2.5 py-1 rounded-lg text-xs font-bold text-amber-300 hover:text-amber-200 flex items-center gap-1 cursor-pointer"
+                              >
+                                <Edit3 className="w-3 h-3" /> Correct / Void
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Desktop Table View (>= 768px) */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead
+                        style={{
+                          backgroundColor: 'var(--bg-subtle)',
+                          borderColor: 'var(--border-outer)',
+                        }}
+                        className="border-b text-[11px] font-bold uppercase tracking-wider text-theme-secondary"
+                      >
+                        <tr>
+                          <th className="py-3.5 px-4">Date & Time</th>
+                          <th className="py-3.5 px-4">Type & Audit Status</th>
+                          <th className="py-3.5 px-4">Category</th>
+                          <th className="py-3.5 px-4">Expense Reason / Details</th>
+                          <th className="py-3.5 px-4">Payment Channel</th>
+                          <th className="py-3.5 px-4 text-right">Amount ({currencySymbol})</th>
+                          <th className="py-3.5 px-4 text-right">Audit Action</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
+                      </thead>
+                      <tbody className="divide-y theme-divider">
+                        {filteredTransactions.map((tx) => {
+                          const txStatus = tx.status || 'ACTIVE';
+                          const isInactive = txStatus !== 'ACTIVE';
+                          const chMeta = getChannelBadgeMeta(tx.payment_method);
+                          const ChIcon = chMeta.icon;
+                          const reasonText = tx.expense_reason || tx.description;
+
+                          return (
+                            <tr
+                              key={tx.id}
+                              className={`hover:bg-white/30 dark:hover:bg-white/5 ${
+                                isInactive ? 'opacity-60 bg-slate-950/30' : ''
+                              }`}
+                            >
+                              <td className="py-3.5 px-4 text-xs tabular-nums text-theme-secondary whitespace-nowrap">
+                                <div>{new Date(tx.transaction_date).toLocaleString()}</div>
+                                <div className="text-[10px] font-mono opacity-75">Entry #{tx.id}</div>
+                              </td>
+                              <td className="py-3.5 px-4">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <Badge
+                                    variant={tx.type === 'INFLOW' ? 'success' : 'danger'}
+                                    icon={tx.type === 'INFLOW' ? ArrowUpRight : ArrowDownRight}
+                                  >
+                                    {tx.type === 'INFLOW' ? 'MONEY IN' : 'EXPENSE'}
+                                  </Badge>
+                                  {tx.parent_transaction_id && (
+                                    <Badge variant="info">
+                                      AMENDED (#{tx.parent_transaction_id})
+                                    </Badge>
+                                  )}
+                                  {txStatus === 'CORRECTED' && (
+                                    <Badge variant="warning">
+                                      CORRECTED {tx.replaced_by_id ? `→ #${tx.replaced_by_id}` : ''}
+                                    </Badge>
+                                  )}
+                                  {txStatus === 'VOIDED' && (
+                                    <Badge variant="danger">VOIDED</Badge>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 font-extrabold font-luxury text-theme-primary">
+                                {tx.category}
+                              </td>
+                              <td className="py-3.5 px-4 text-theme-secondary max-w-md">
+                                <div>
+                                  {tx.counterparty_name ? (
+                                    <strong className="text-theme-primary">
+                                      {tx.counterparty_name}:{' '}
+                                    </strong>
+                                  ) : null}
+                                  {reasonText}
+                                </div>
+                                {tx.correction_reason && (
+                                  <div className="text-[11px] text-amber-300 mt-1 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-0.5 inline-block">
+                                    <strong>Audit Reason:</strong> {tx.correction_reason}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4 whitespace-nowrap">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border ${chMeta.pillClass}`}
+                                >
+                                  <ChIcon className="w-3.5 h-3.5" />
+                                  {chMeta.label}
+                                </span>
+                              </td>
+                              <td
+                                className={`py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums whitespace-nowrap ${
+                                  isInactive
+                                    ? 'line-through text-slate-500'
+                                    : tx.type === 'INFLOW'
+                                    ? 'text-theme-inflow'
+                                    : 'text-theme-outflow'
+                                }`}
+                              >
+                                {tx.type === 'INFLOW' ? '+' : '-'}
+                                {formatNaira(tx.amount)}
+                              </td>
+                              <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                                {!isInactive ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenCorrectTx(tx)}
+                                    title="Correct or void this entry while preserving audit history"
+                                    className="liquid-glass-subtle px-2.5 py-1.5 rounded-xl text-xs font-bold text-theme-primary hover:text-amber-300 inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                    <span>Correct</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[11px] text-slate-500 italic">
+                                    Audit Locked
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -3281,8 +3983,8 @@ function AppShell() {
       <Modal
         isOpen={showCashModal}
         onClose={() => setShowCashModal(false)}
-        title="Record Shop Expense or Cash In"
-        subtitle="Keep track of generator fuel, Nepa light, market transport, shop rent, or extra cash"
+        title="Record Shop Expense or Money In"
+        subtitle="Log every shop expense with a clear category, reason, and payment channel (Cash, POS, or Transfer)"
       >
         <form onSubmit={handleCreateCashTx} className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
@@ -3292,7 +3994,7 @@ function AppShell() {
                 setCashForm({
                   ...cashForm,
                   type: 'OUTFLOW',
-                  category: 'Generator Fuel / Petrol',
+                  category: 'Generator & Power',
                 })
               }
               className={`py-2.5 rounded-xl text-xs font-bold border cursor-pointer ${
@@ -3318,14 +4020,14 @@ function AppShell() {
                   : 'liquid-glass-subtle'
               }`}
             >
-              + MONEY IN (SALES)
+              + MONEY IN (INFLOW)
             </button>
           </div>
 
-          {cashForm.type === 'OUTFLOW' && (
-            <div>
-              <label className="block text-xs font-bold mb-1.5 text-theme-primary">
-                Quick Lagos Shop Expense Type:
+          {cashForm.type === 'OUTFLOW' ? (
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-theme-primary">
+                1. Select Expense Category:
               </label>
               <div className="flex flex-wrap gap-1.5">
                 {LAGOS_EXPENSE_PRESETS.map((preset) => (
@@ -3344,47 +4046,117 @@ function AppShell() {
                 ))}
               </div>
             </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-theme-primary">
+                1. Select Money In Category:
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {['Counter Sales', 'Credit Repayment', 'Wholesale Order', 'Capital / Float In', 'Other Income'].map(
+                  (preset) => (
+                    <button
+                      type="button"
+                      key={preset}
+                      onClick={() => setCashForm({ ...cashForm, category: preset })}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer ${
+                        cashForm.category === preset
+                          ? 'liquid-btn-primary'
+                          : 'liquid-glass-subtle'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
           )}
+
+          {/* Visual Payment Channel Selector */}
+          <div>
+            <label className="block text-xs font-bold mb-1.5 text-theme-primary">
+              2. Payment Channel (Cash, POS, or Bank Transfer):
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {['CASH', 'POS', 'BANK_TRANSFER', 'MOBILE_MONEY'].map((chId) => {
+                const meta = getChannelBadgeMeta(chId);
+                const Icon = meta.icon;
+                const active = cashForm.payment_method === chId;
+                return (
+                  <button
+                    type="button"
+                    key={chId}
+                    onClick={() => setCashForm({ ...cashForm, payment_method: chId })}
+                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all ${
+                      active
+                        ? meta.pillClass
+                        : 'liquid-glass-subtle text-theme-secondary hover:opacity-90'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{meta.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Amount ({currencySymbol})
+                3. Amount ({currencySymbol})
               </label>
               <input
                 type="number"
+                step="any"
                 required
                 placeholder="e.g. 5000"
                 value={cashForm.amount}
                 onChange={(e) => setCashForm({ ...cashForm, amount: e.target.value })}
-                className="liquid-input w-full rounded-xl px-3 py-2 text-sm"
+                className="liquid-input w-full rounded-xl px-3 py-2 text-sm font-bold"
               />
             </div>
             <div>
               <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Payment Channel
+                {cashForm.type === 'OUTFLOW'
+                  ? 'Payee / Vendor Name (Optional)'
+                  : 'Payer / Customer Name (Optional)'}
               </label>
-              <select
-                value={cashForm.payment_method}
-                onChange={(e) => setCashForm({ ...cashForm, payment_method: e.target.value })}
+              <input
+                type="text"
+                value={cashForm.counterparty_name}
+                onChange={(e) => setCashForm({ ...cashForm, counterparty_name: e.target.value })}
+                placeholder={
+                  cashForm.type === 'OUTFLOW'
+                    ? 'e.g. Total Petrol Station / Market Driver'
+                    : 'e.g. Walk-in Customer'
+                }
                 className="liquid-input w-full rounded-xl px-3 py-2 text-sm"
-              >
-                <option value="CASH">Cash</option>
-                <option value="POS">POS Terminal</option>
-                <option value="BANK_TRANSFER">Bank Transfer</option>
-                <option value="MOBILE_MONEY">Mobile Wallet</option>
-              </select>
+              />
             </div>
           </div>
 
           <div>
             <label className="block text-xs font-bold mb-1 text-theme-primary">
-              Short Note (Optional)
+              {cashForm.type === 'OUTFLOW'
+                ? '4. Specific Expense Reason / Purpose (Required)'
+                : '4. Description / Reference Note'}
             </label>
             <input
-              value={cashForm.description}
-              onChange={(e) => setCashForm({ ...cashForm, description: e.target.value })}
-              placeholder="e.g. 5 litres fuel for evening generator"
+              required={cashForm.type === 'OUTFLOW'}
+              value={cashForm.expense_reason || cashForm.description}
+              onChange={(e) =>
+                setCashForm({
+                  ...cashForm,
+                  expense_reason: e.target.value,
+                  description: e.target.value,
+                })
+              }
+              placeholder={
+                cashForm.type === 'OUTFLOW'
+                  ? 'e.g. Bought 10 litres of petrol for evening shop generator'
+                  : 'e.g. Bulk carton order paid via transfer'
+              }
               className="liquid-input w-full rounded-xl px-3 py-2 text-sm"
             />
           </div>
@@ -3548,6 +4320,33 @@ function AppShell() {
         products={products}
         apiFetch={apiFetch}
         formatCurrency={formatNaira}
+        toastSuccess={(msg) => showSuccessToast(msg)}
+        toastError={(msg) => toastError?.(msg) || alert(msg)}
+        onSuccess={() => fetchAllData()}
+      />
+
+      {/* DAILY CASHBOOK OPENING & CLOSING BALANCE REGISTER MODAL */}
+      <CashbookSessionModal
+        isOpen={showSessionModal}
+        onClose={() => setShowSessionModal(false)}
+        initialMode={sessionModalMode}
+        sessionState={cashbookSession}
+        apiFetch={apiFetch}
+        formatCurrency={formatNaira}
+        currencySymbol={currencySymbol}
+        toastSuccess={(msg) => showSuccessToast(msg)}
+        toastError={(msg) => toastError?.(msg) || alert(msg)}
+        onSuccess={() => fetchAllData()}
+      />
+
+      {/* AUDIT-SAFE TRANSACTION CORRECTION & VOID MODAL */}
+      <TransactionCorrectionModal
+        isOpen={Boolean(correctingTx)}
+        onClose={() => setCorrectingTx(null)}
+        transaction={correctingTx}
+        apiFetch={apiFetch}
+        formatCurrency={formatNaira}
+        currencySymbol={currencySymbol}
         toastSuccess={(msg) => showSuccessToast(msg)}
         toastError={(msg) => toastError?.(msg) || alert(msg)}
         onSuccess={() => fetchAllData()}
