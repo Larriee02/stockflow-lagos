@@ -215,4 +215,28 @@ module.exports = [
         ON cashbook_sessions (user_id, session_date);
     `,
   },
+  {
+    id: '006_credit_due_dates_and_repayments',
+    sql: `
+      ALTER TABLE credit_records
+        ADD COLUMN IF NOT EXISTS due_date TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS customer_address TEXT,
+        ADD COLUMN IF NOT EXISTS notes TEXT;
+
+      CREATE TABLE IF NOT EXISTS credit_repayments (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        credit_record_id INTEGER REFERENCES credit_records(id) ON DELETE SET NULL,
+        customer_name VARCHAR(120) NOT NULL,
+        amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
+        payment_method VARCHAR(30) NOT NULL DEFAULT 'CASH',
+        note TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_credit_repayments_user ON credit_repayments (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_credit_repayments_record ON credit_repayments (credit_record_id);
+      CREATE INDEX IF NOT EXISTS idx_credit_records_due ON credit_records (user_id, due_date);
+    `,
+  },
 ];

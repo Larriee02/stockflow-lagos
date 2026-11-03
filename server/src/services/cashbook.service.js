@@ -392,7 +392,7 @@ class CashbookService {
     return record;
   }
 
-  async repayCredit(userId, id, { amount, payment_method = 'CASH' }) {
+  async repayCredit(userId, id, { amount, payment_method = 'CASH', note = '' }) {
     const payAmount = Number(amount);
     if (payAmount <= 0 || Number.isNaN(payAmount)) {
       throw new AppError('Repayment amount must be greater than zero.');
@@ -428,6 +428,22 @@ class CashbookService {
         [newPaid, newBalance, newStatus, id, userId]
       );
 
+      // Record in credit_repayments audit table
+      const repRes = await client.query(
+        `INSERT INTO credit_repayments (
+          user_id, credit_record_id, customer_name, amount, payment_method, note
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *`,
+        [
+          userId,
+          id,
+          credit.customer_name,
+          payAmount,
+          payment_method,
+          note?.trim() || `Payment towards credit #${id} (${credit.items_summary})`,
+        ]
+      );
+
       const cashRes = await client.query(
         `INSERT INTO cash_transactions (
           user_id, type, category, amount, payment_method, counterparty_name, description
@@ -446,12 +462,334 @@ class CashbookService {
 
       return {
         credit: updatedCred.rows[0],
+        repayment: repRes.rows[0],
         cashTransaction: cashRes.rows[0],
       };
     });
 
     cacheService.invalidatePrefix(`dashboard:${userId}`);
     return result;
+  }
+
+  /**
+   * Aggregate Customer Ledgers: Group multiple credit purchases by customer,
+   * showing aggregate balance, contact details, overdue status, and earliest due date.
+   */
+  async getCustomerLedgers(userId) {
+    const credits = await cashbookRepo.findCredits(userId);
+    const groups = new Map();
+
+    for (const c of credits) {
+      const key = String(c.customer_name || '').trim().toLowerCase();
+      if (!key) continue;
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          customer_name: c.customer_name.trim(),
+          phone: c.phone?.trim() || null,
+          customer_address: c.customer_address?.trim() || null,
+          notes: c.notes?.trim() || null,
+          total_credit_taken: 0,
+          total_paid: 0,
+          total_balance_due: 0,
+          credit_count: 0,
+          active_credits_count: 0,
+          is_overdue: false,
+          max_days_overdue: 0,
+          earliest_due_date: null,
+          latest_credit_date: c.created_at,
+          invoices: [],
+        });
+      }
+
+      const g = groups.get(key);
+      if (c.phone && !g.phone) g.phone = c.phone.trim();
+      if (c.customer_address && !g.customer_address) g.customer_address = c.customer_address.trim();
+      if (c.notes && !g.notes) g.notes = c.notes.trim();
+
+      const total = Number(c.total_amount || 0);
+      const paid = Number(c.amount_paid || 0);
+      const bal = Number(c.balance_due || 0);
+
+      g.total_credit_taken = Number((g.total_credit_taken + total).toFixed(2));
+      g.total_paid = Number((g.total_paid + paid).toFixed(2));
+      g.total_balance_due = Number((g.total_balance_due + bal).toFixed(2));
+      g.credit_count += 1;
+
+      if (bal > 0) {
+        g.active_credits_count += 1;
+        if (c.is_overdue) {
+          g.is_overdue = true;
+          if (c.days_overdue > g.max_days_overdue) {
+            g.max_days_overdue = c.days_overdue;
+          }
+        }
+        if (c.due_date) {
+          if (!g.earliest_due_date || new Date(c.due_date) < new Date(g.earliest_due_date)) {
+            g.earliest_due_date = c.due_date;
+          }
+        }
+      }
+
+      if (new Date(c.created_at) > new Date(g.latest_credit_date)) {
+        g.latest_credit_date = c.created_at;
+      }
+
+      g.invoices.push(c);
+    }
+
+    const result = Array.from(groups.values()).map((g) => ({
+      ...g,
+      status: g.total_balance_due <= 0 ? 'SETTLED' : g.is_overdue ? 'OVERDUE' : 'OWING',
+    }));
+
+    // Sort by largest balance owed first, then overdue status, then latest date
+    result.sort((a, b) => {
+      if (b.total_balance_due !== a.total_balance_due) {
+        return b.total_balance_due - a.total_balance_due;
+      }
+      if (b.is_overdue !== a.is_overdue) {
+        return b.is_overdue ? 1 : -1;
+      }
+      return new Date(b.latest_credit_date) - new Date(a.latest_credit_date);
+    });
+
+    return result;
+  }
+
+  /**
+   * Settle customer debt across multiple credit invoices FIFO (First In First Out)
+   */
+  async repayCustomerDebt(userId, customerName, { amount, payment_method = 'CASH', note = '' }) {
+    const payAmount = Number(amount);
+    if (payAmount <= 0 || Number.isNaN(payAmount)) {
+      throw new AppError('Repayment amount must be greater than zero.');
+    }
+
+    const normName = String(customerName || '').trim().toLowerCase();
+    if (!normName) {
+      throw new AppError('Customer name is required.');
+    }
+
+    const result = await db.withTransaction(async (client) => {
+      // Find all owing credit records for this customer, sorted oldest first (FIFO)
+      const credRes = await client.query(
+        `SELECT * FROM credit_records
+         WHERE user_id = $1 AND LOWER(TRIM(customer_name)) = $2 AND status = 'OWING' AND balance_due > 0
+         ORDER BY created_at ASC, id ASC
+         FOR UPDATE`,
+        [userId, normName]
+      );
+
+      if (credRes.rows.length === 0) {
+        throw new AppError('No outstanding credit balance found for this customer.', 404);
+      }
+
+      const totalOwing = credRes.rows.reduce((sum, r) => sum + Number(r.balance_due), 0);
+      if (payAmount > Number(totalOwing.toFixed(2))) {
+        throw new AppError(
+          `Payment amount (₦${payAmount.toLocaleString()}) exceeds total outstanding balance (₦${totalOwing.toLocaleString()}).`
+        );
+      }
+
+      let remainingToApply = payAmount;
+      const updatedCredits = [];
+      const createdRepayments = [];
+      const displayCustomerName = credRes.rows[0].customer_name;
+
+      for (const credit of credRes.rows) {
+        if (remainingToApply <= 0) break;
+
+        const creditBalance = Number(credit.balance_due);
+        const applyAmt = Number(Math.min(remainingToApply, creditBalance).toFixed(2));
+        const newPaid = Number((Number(credit.amount_paid) + applyAmt).toFixed(2));
+        const newBalance = Number((creditBalance - applyAmt).toFixed(2));
+        const newStatus = newBalance <= 0 ? 'PAID' : 'OWING';
+
+        const updated = await client.query(
+          `UPDATE credit_records
+           SET amount_paid = $1, balance_due = $2, status = $3, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $4 AND user_id = $5
+           RETURNING *`,
+          [newPaid, newBalance, newStatus, credit.id, userId]
+        );
+        updatedCredits.push(updated.rows[0]);
+
+        const rep = await client.query(
+          `INSERT INTO credit_repayments (
+            user_id, credit_record_id, customer_name, amount, payment_method, note
+          ) VALUES ($1, $2, $3, $4, $5, $6)
+          RETURNING *`,
+          [
+            userId,
+            credit.id,
+            displayCustomerName,
+            applyAmt,
+            payment_method,
+            note?.trim() || `Account payment applied to invoice #${credit.id} (${credit.items_summary})`,
+          ]
+        );
+        createdRepayments.push(rep.rows[0]);
+
+        remainingToApply = Number((remainingToApply - applyAmt).toFixed(2));
+      }
+
+      // Record single Inflow cash transaction
+      const remainingTotalBalance = Number((totalOwing - payAmount).toFixed(2));
+      const cashRes = await client.query(
+        `INSERT INTO cash_transactions (
+          user_id, type, category, amount, payment_method, counterparty_name, description
+        ) VALUES ($1, 'INFLOW', 'Credit Repayment', $2, $3, $4, $5)
+        RETURNING *`,
+        [
+          userId,
+          payAmount,
+          payment_method,
+          displayCustomerName,
+          `Debt payment from ${displayCustomerName}${
+            note ? ` (${note})` : ''
+          }${remainingTotalBalance > 0 ? ` — Remaining balance: ₦${remainingTotalBalance.toLocaleString()}` : ' — Fully Settled!'}`,
+        ]
+      );
+
+      return {
+        customer_name: displayCustomerName,
+        total_paid: payAmount,
+        remaining_balance: remainingTotalBalance,
+        updatedCredits,
+        createdRepayments,
+        cashTransaction: cashRes.rows[0],
+      };
+    });
+
+    cacheService.invalidatePrefix(`dashboard:${userId}`);
+    return result;
+  }
+
+  /**
+   * Generates a formal, printable Statement of Account for a customer
+   * showing all purchases on credit, initial down-payments, subsequent repayments, and running balance.
+   */
+  async getCustomerStatement(userId, customerName) {
+    const normName = String(customerName || '').trim().toLowerCase();
+    if (!normName) {
+      throw new AppError('Customer name is required.');
+    }
+
+    const allCredits = await cashbookRepo.findCredits(userId);
+    const customerCredits = allCredits.filter(
+      (c) => String(c.customer_name || '').trim().toLowerCase() === normName
+    );
+
+    if (customerCredits.length === 0) {
+      throw new AppError(`No credit records found for customer "${customerName}".`, 404);
+    }
+
+    const repayments = await cashbookRepo.findCreditRepayments(userId, { customer_name: normName });
+
+    // Build timeline events
+    const rawEvents = [];
+
+    // Credit Purchases and Initial Down-payments
+    for (const c of customerCredits) {
+      // The credit invoice purchase (Debit to customer account)
+      rawEvents.push({
+        id: `inv-${c.id}`,
+        credit_record_id: c.id,
+        timestamp: new Date(c.created_at).getTime(),
+        date: c.created_at,
+        type: 'INVOICE',
+        title: `Credit Purchase #${c.id}`,
+        description: c.items_summary,
+        debit: Number(c.total_amount),
+        credit: 0,
+        due_date: c.due_date,
+        is_overdue: c.is_overdue,
+        status: c.status,
+      });
+
+      // If initial deposit/down-payment was made at checkout but not logged in credit_repayments (historical data):
+      const totalRecordedRepayments = repayments
+        .filter((r) => Number(r.credit_record_id) === Number(c.id))
+        .reduce((sum, r) => sum + Number(r.amount), 0);
+      const unloggedDownpayment = Number((Number(c.amount_paid) - totalRecordedRepayments).toFixed(2));
+
+      if (unloggedDownpayment > 0.009) {
+        rawEvents.push({
+          id: `down-${c.id}`,
+          credit_record_id: c.id,
+          timestamp: new Date(c.created_at).getTime() + 1,
+          date: c.created_at,
+          type: 'DOWN_PAYMENT',
+          title: 'Initial Deposit / Down-Payment',
+          description: 'Paid at time of purchase',
+          debit: 0,
+          credit: unloggedDownpayment,
+          payment_method: 'CASH',
+        });
+      }
+    }
+
+    // Subsequent Repayments (Credit to customer account)
+    for (const r of repayments) {
+      rawEvents.push({
+        id: `rep-${r.id}`,
+        credit_record_id: r.credit_record_id,
+        timestamp: new Date(r.created_at).getTime(),
+        date: r.created_at,
+        type: 'REPAYMENT',
+        title: `Repayment (${r.payment_method || 'CASH'})`,
+        description: r.note || 'Payment towards outstanding balance',
+        debit: 0,
+        credit: Number(r.amount),
+        payment_method: r.payment_method,
+      });
+    }
+
+    // Sort chronologically ascending
+    rawEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Compute running balance
+    let runningBalance = 0;
+    const ledger = rawEvents.map((evt) => {
+      runningBalance = Number((runningBalance + evt.debit - evt.credit).toFixed(2));
+      return {
+        ...evt,
+        running_balance: runningBalance,
+      };
+    });
+
+    const displayCustomerName =
+      customerCredits.find((c) => /[A-Z]/.test(c.customer_name))?.customer_name ||
+      customerCredits[0]?.customer_name ||
+      customerName;
+    const phone = customerCredits.find((c) => c.phone)?.phone || null;
+    const address = customerCredits.find((c) => c.customer_address)?.customer_address || null;
+    const notes = customerCredits.find((c) => c.notes)?.notes || null;
+
+    const totalCreditTaken = customerCredits.reduce((s, c) => s + Number(c.total_amount), 0);
+    const totalPaid = customerCredits.reduce((s, c) => s + Number(c.amount_paid), 0);
+    const currentBalanceDue = customerCredits.reduce((s, c) => s + Number(c.balance_due), 0);
+    const hasOverdue = customerCredits.some((c) => c.is_overdue);
+
+    return {
+      customer: {
+        name: displayCustomerName,
+        phone,
+        address,
+        notes,
+      },
+      summary: {
+        total_credit_taken: Number(totalCreditTaken.toFixed(2)),
+        total_paid: Number(totalPaid.toFixed(2)),
+        current_balance_due: Number(currentBalanceDue.toFixed(2)),
+        invoice_count: customerCredits.length,
+        active_invoices: customerCredits.filter((c) => c.status === 'OWING' && Number(c.balance_due) > 0).length,
+        is_overdue: hasOverdue,
+        statement_date: new Date().toISOString(),
+      },
+      ledger,
+    };
   }
 }
 

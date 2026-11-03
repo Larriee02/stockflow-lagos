@@ -18,6 +18,7 @@ function buildInitialState() {
     cash_transactions: [],
     cashbook_sessions: [],
     credit_records: [],
+    credit_repayments: [],
   };
 }
 
@@ -92,6 +93,9 @@ function loadState() {
       memoryState = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
       if (!Array.isArray(memoryState.cashbook_sessions)) {
         memoryState.cashbook_sessions = [];
+      }
+      if (!Array.isArray(memoryState.credit_repayments)) {
+        memoryState.credit_repayments = [];
       }
       if (ensureOwner(memoryState)) saveState(memoryState);
       return memoryState;
@@ -1397,6 +1401,24 @@ async function executeQuery(text, params = []) {
     return { rows: found ? [found] : [], rowCount: found ? 1 : 0 };
   }
 
+  if (
+    upper.includes('FROM CREDIT_RECORDS') &&
+    upper.includes('LOWER(TRIM(CUSTOMER_NAME)) = $2')
+  ) {
+    const uid = Number(params[0]);
+    const normName = String(params[1] || '').trim().toLowerCase();
+    let list = state.credit_records.filter(
+      (c) =>
+        Number(c.user_id) === uid &&
+        String(c.customer_name || '').trim().toLowerCase() === normName
+    );
+    if (upper.includes("STATUS = 'OWING'")) {
+      list = list.filter((c) => c.status === 'OWING' && Number(c.balance_due) > 0);
+    }
+    list.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    return { rows: list, rowCount: list.length };
+  }
+
   if (upper.startsWith('SELECT * FROM CREDIT_RECORDS')) {
     const uid = Number(params[0]);
     let list = state.credit_records.filter((c) => Number(c.user_id) === uid);
@@ -1405,7 +1427,7 @@ async function executeQuery(text, params = []) {
     }
     list.sort((a, b) => {
       if (a.status !== b.status) return a.status === 'OWING' ? -1 : 1;
-      return new Date(b.updated_at) - new Date(a.updated_at);
+      return new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at);
     });
     return { rows: list, rowCount: list.length };
   }
@@ -1420,18 +1442,28 @@ async function executeQuery(text, params = []) {
       amount_paid,
       balance_due,
       status,
+      due_date,
+      customer_address,
+      notes,
     ] = params;
     const now = new Date().toISOString();
+    const finalDueDate = due_date
+      ? new Date(due_date).toISOString()
+      : new Date(Date.now() + 7 * 86400000).toISOString();
+
     const rec = {
       id: nextId(state.credit_records),
       user_id: Number(user_id),
-      customer_name,
-      phone,
-      items_summary,
+      customer_name: customer_name ? customer_name.trim() : '',
+      phone: phone ? phone.trim() : null,
+      items_summary: items_summary ? items_summary.trim() : '',
       total_amount: Number(total_amount),
       amount_paid: Number(amount_paid),
       balance_due: Number(balance_due),
       status: status || 'OWING',
+      due_date: finalDueDate,
+      customer_address: customer_address ? customer_address.trim() : null,
+      notes: notes ? notes.trim() : null,
       created_at: now,
       updated_at: now,
     };
@@ -1452,6 +1484,48 @@ async function executeQuery(text, params = []) {
     rec.updated_at = new Date().toISOString();
     saveState(state);
     return { rows: [rec], rowCount: 1 };
+  }
+
+  if (upper.startsWith('INSERT INTO CREDIT_REPAYMENTS')) {
+    const [user_id, credit_record_id, customer_name, amount, payment_method, note] = params;
+    const now = new Date().toISOString();
+    const rep = {
+      id: nextId(state.credit_repayments || []),
+      user_id: Number(user_id),
+      credit_record_id: credit_record_id ? Number(credit_record_id) : null,
+      customer_name: customer_name ? customer_name.trim() : '',
+      amount: Number(amount),
+      payment_method: payment_method || 'CASH',
+      note: note ? note.trim() : null,
+      created_at: now,
+    };
+    if (!Array.isArray(state.credit_repayments)) state.credit_repayments = [];
+    state.credit_repayments.push(rep);
+    saveState(state);
+    return { rows: [rep], rowCount: 1 };
+  }
+
+  if (upper.startsWith('SELECT * FROM CREDIT_REPAYMENTS')) {
+    const uid = Number(params[0]);
+    let list = (state.credit_repayments || []).filter((r) => Number(r.user_id) === uid);
+    if (upper.includes('CREDIT_RECORD_ID = $2')) {
+      const recId = Number(params[1]);
+      list = list.filter((r) => Number(r.credit_record_id) === recId);
+    } else if (upper.includes('LOWER(CUSTOMER_NAME) = $2')) {
+      const name = String(params[1] || '').trim().toLowerCase();
+      list = list.filter((r) => String(r.customer_name || '').trim().toLowerCase() === name);
+    }
+    list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return { rows: list, rowCount: list.length };
+  }
+
+  if (upper.startsWith('DELETE FROM CREDIT_REPAYMENTS WHERE USER_ID = $1')) {
+    const uid = Number(params[0]);
+    state.credit_repayments = (state.credit_repayments || []).filter(
+      (r) => Number(r.user_id) !== uid
+    );
+    saveState(state);
+    return { rows: [], rowCount: 1 };
   }
 
   if (upper.startsWith('DELETE FROM CREDIT_RECORDS WHERE USER_ID = $1')) {

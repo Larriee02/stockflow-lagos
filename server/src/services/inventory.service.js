@@ -63,6 +63,8 @@ class InventoryService {
       amount_paid,
       customer_name = '',
       customer_phone = '',
+      customer_address = '',
+      due_date = null,
       note = '',
     } = payload;
 
@@ -171,10 +173,15 @@ class InventoryService {
 
       let creditRecord = null;
       if (balanceDue > 0) {
+        const finalDueDate = due_date
+          ? new Date(due_date).toISOString()
+          : new Date(Date.now() + 7 * 86400000).toISOString();
+
         const credRes = await client.query(
           `INSERT INTO credit_records (
-            user_id, customer_name, phone, items_summary, total_amount, amount_paid, balance_due, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OWING')
+            user_id, customer_name, phone, items_summary, total_amount, amount_paid,
+            balance_due, status, due_date, customer_address, notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OWING', $8, $9, $10)
           RETURNING *`,
           [
             userId,
@@ -184,9 +191,28 @@ class InventoryService {
             basketTotal,
             actualPaid,
             balanceDue,
+            finalDueDate,
+            customer_address ? customer_address.trim() : null,
+            note ? note.trim() : null,
           ]
         );
         creditRecord = credRes.rows[0];
+
+        if (actualPaid > 0) {
+          await client.query(
+            `INSERT INTO credit_repayments (
+              user_id, credit_record_id, customer_name, amount, payment_method, note
+            ) VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              userId,
+              creditRecord.id,
+              customer_name.trim(),
+              actualPaid,
+              payment_method || 'CASH',
+              'Initial deposit at checkout',
+            ]
+          );
+        }
       }
 
       return {

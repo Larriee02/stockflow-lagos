@@ -42,6 +42,9 @@ import {
   Lock,
   Unlock,
   RotateCcw,
+  UserPlus,
+  Clock,
+  MapPin,
 } from 'lucide-react';
 import { useDebounce } from './hooks/useDebounce';
 import { Modal } from './components/ui/Modal';
@@ -57,6 +60,10 @@ import { PhysicalStockAuditModal } from './components/inventory/PhysicalStockAud
 import { BatchAdjustModal } from './components/inventory/BatchAdjustModal';
 import { CashbookSessionModal } from './components/cashbook/CashbookSessionModal';
 import { TransactionCorrectionModal } from './components/cashbook/TransactionCorrectionModal';
+import { WhatsAppReminderModal } from './components/debtors/WhatsAppReminderModal';
+import { CustomerStatementModal } from './components/debtors/CustomerStatementModal';
+import { CustomerRepaymentModal } from './components/debtors/CustomerRepaymentModal';
+import { CustomerCreditModal } from './components/debtors/CustomerCreditModal';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
@@ -197,6 +204,19 @@ function AppShell() {
   const [cashbookSession, setCashbookSession] = useState(null);
   const [movements, setMovements] = useState([]);
   const [credits, setCredits] = useState([]);
+  const [customerLedgers, setCustomerLedgers] = useState([]);
+
+  // Debtor Views & Filter States
+  const [debtorViewMode, setDebtorViewMode] = useState('ACCOUNTS'); // 'ACCOUNTS' | 'SLIPS'
+  const [debtorFilter, setDebtorFilter] = useState('ALL'); // 'ALL' | 'OWING' | 'OVERDUE' | 'SETTLED'
+  const [debtorSearch, setDebtorSearch] = useState('');
+  const debouncedDebtorSearch = useDebounce(debtorSearch, 150);
+
+  // Debtor Modals
+  const [whatsAppModalTarget, setWhatsAppModalTarget] = useState(null);
+  const [statementModalCustomer, setStatementModalCustomer] = useState(null);
+  const [repaymentModalTarget, setRepaymentModalTarget] = useState(null);
+  const [showAddCreditModal, setShowAddCreditModal] = useState(false);
 
   // Quick Counter Sale Basket State
   const [cart, setCart] = useState({});
@@ -343,13 +363,14 @@ function AppShell() {
       if (!isApprovedStoreAccess) return;
       try {
         setError('');
-        const [dashData, prodData, txData, sessData, movData, credData] = await Promise.all([
+        const [dashData, prodData, txData, sessData, movData, credData, custData] = await Promise.all([
           apiFetch('/api/v1/dashboard', { signal }),
           apiFetch('/api/v1/products', { signal }),
           apiFetch('/api/v1/transactions?limit=500', { signal }),
           apiFetch('/api/v1/cashbook/sessions', { signal }).catch(() => null),
           apiFetch('/api/v1/inventory/movements?limit=250', { signal }),
           apiFetch('/api/v1/credits', { signal }),
+          apiFetch('/api/v1/credits/customers', { signal }).catch(() => []),
         ]);
 
         setDashboard(dashData || {});
@@ -358,6 +379,7 @@ function AppShell() {
         if (sessData) setCashbookSession(sessData);
         setMovements(Array.isArray(movData) ? movData : []);
         setCredits(Array.isArray(credData) ? credData : []);
+        setCustomerLedgers(Array.isArray(custData) ? custData : []);
       } catch (err) {
         if (err.status === 401 || err.status === 403) {
           checkAuthSession();
@@ -372,6 +394,23 @@ function AppShell() {
     },
     [isApprovedStoreAccess, checkAuthSession]
   );
+
+  const refreshDebtors = useCallback(async () => {
+    try {
+      const [credData, custData, dashData, txData] = await Promise.all([
+        apiFetch('/api/v1/credits'),
+        apiFetch('/api/v1/credits/customers').catch(() => []),
+        apiFetch('/api/v1/dashboard').catch(() => null),
+        apiFetch('/api/v1/transactions?limit=500').catch(() => null),
+      ]);
+      setCredits(Array.isArray(credData) ? credData : []);
+      setCustomerLedgers(Array.isArray(custData) ? custData : []);
+      if (dashData) setDashboard(dashData);
+      if (Array.isArray(txData)) setTransactions(txData);
+    } catch {
+      // silent
+    }
+  }, []);
 
   useEffect(() => {
     if (!isApprovedStoreAccess) return;
@@ -751,6 +790,86 @@ function AppShell() {
       expensesByCategory,
     };
   }, [transactions, cashPeriodBounds, cashDateRange, cashbookSession]);
+
+  // Debtor Book & Customer Ledgers Calculations
+  const debtorMetrics = useMemo(() => {
+    let totalOwed = 0;
+    let totalOverdue = 0;
+    let overdueCount = 0;
+    let owingCustomersCount = 0;
+    let totalCollected = 0;
+
+    if (customerLedgers.length > 0) {
+      for (const l of customerLedgers) {
+        const bal = Number(l.total_balance_due || 0);
+        totalCollected += Number(l.total_paid || 0);
+        if (bal > 0) {
+          totalOwed += bal;
+          owingCustomersCount += 1;
+          if (l.is_overdue) {
+            totalOverdue += bal;
+            overdueCount += 1;
+          }
+        }
+      }
+    } else {
+      for (const c of credits) {
+        const bal = Number(c.balance_due || 0);
+        totalCollected += Number(c.amount_paid || 0);
+        if (c.status === 'OWING' && bal > 0) {
+          totalOwed += bal;
+          owingCustomersCount += 1;
+          if (c.is_overdue) {
+            totalOverdue += bal;
+            overdueCount += 1;
+          }
+        }
+      }
+    }
+
+    return {
+      totalOwed,
+      totalOverdue,
+      overdueCount,
+      owingCustomersCount,
+      totalCollected,
+    };
+  }, [customerLedgers, credits]);
+
+  const filteredLedgers = useMemo(() => {
+    const q = debouncedDebtorSearch.trim().toLowerCase();
+    return customerLedgers.filter((l) => {
+      if (q) {
+        const matchName = (l.customer_name || '').toLowerCase().includes(q);
+        const matchPhone = (l.phone || '').toLowerCase().includes(q);
+        const matchAddress = (l.customer_address || '').toLowerCase().includes(q);
+        const matchNotes = (l.notes || '').toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchAddress && !matchNotes) return false;
+      }
+      if (debtorFilter === 'OWING') return Number(l.total_balance_due) > 0;
+      if (debtorFilter === 'OVERDUE') return l.is_overdue && Number(l.total_balance_due) > 0;
+      if (debtorFilter === 'SETTLED') return Number(l.total_balance_due) <= 0;
+      return true;
+    });
+  }, [customerLedgers, debouncedDebtorSearch, debtorFilter]);
+
+  const filteredCredits = useMemo(() => {
+    const q = debouncedDebtorSearch.trim().toLowerCase();
+    return credits.filter((c) => {
+      if (q) {
+        const matchName = (c.customer_name || '').toLowerCase().includes(q);
+        const matchPhone = (c.phone || '').toLowerCase().includes(q);
+        const matchItems = (c.items_summary || '').toLowerCase().includes(q);
+        const matchAddress = (c.customer_address || '').toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchItems && !matchAddress) return false;
+      }
+      const isOwing = c.status === 'OWING' && Number(c.balance_due) > 0;
+      if (debtorFilter === 'OWING') return isOwing;
+      if (debtorFilter === 'OVERDUE') return c.is_overdue && isOwing;
+      if (debtorFilter === 'SETTLED') return !isOwing;
+      return true;
+    });
+  }, [credits, debouncedDebtorSearch, debtorFilter]);
 
   // Cart Calculations
   const cartItems = useMemo(() => {
@@ -3300,187 +3419,610 @@ function AppShell() {
 
         {/* TAB 5: DEBTORS BOOK (CUSTOMERS OWING ME) */}
         {activeTab === 'debtors' && (
-          <div className="liquid-glass rounded-3xl overflow-hidden">
-            <div
-              style={{ borderColor: 'var(--border-outer)' }}
-              className="p-4 border-b flex items-center justify-between"
-            >
-              <div>
-                <h3 className="font-extrabold font-luxury text-base text-theme-primary">
-                  Customers Owing the Shop (Credit Book)
-                </h3>
-                <p className="text-xs text-theme-secondary">
-                  When a customer pays their balance, tap &ldquo;Collect Money&rdquo; to automatically
-                  add it to your Cashbook.
-                </p>
-              </div>
+          <div className="space-y-4 sm:space-y-5">
+            {/* Top KPI Cards for Debtors */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              <StatCard
+                title="Total Credit Owed"
+                value={formatNaira(debtorMetrics.totalOwed)}
+                subtitle={`${debtorMetrics.owingCustomersCount} customers owing`}
+                icon={Wallet}
+                accent="red"
+              />
+              <StatCard
+                title="Overdue Debt"
+                value={formatNaira(debtorMetrics.totalOverdue)}
+                subtitle={
+                  debtorMetrics.overdueCount > 0
+                    ? `${debtorMetrics.overdueCount} overdue accounts!`
+                    : 'All due dates current'
+                }
+                icon={AlertTriangle}
+                accent={debtorMetrics.overdueCount > 0 ? 'red' : 'emerald'}
+              />
+              <StatCard
+                title="Total Debt Collected"
+                value={formatNaira(debtorMetrics.totalCollected)}
+                subtitle="Historical repayments"
+                icon={CheckCircle2}
+                accent="emerald"
+              />
+              <StatCard
+                title="Credit Invoices"
+                value={credits.length}
+                subtitle={`${customerLedgers.length} customer ledgers`}
+                icon={FileText}
+                accent="blue"
+              />
             </div>
 
-            {credits.length === 0 ? (
-              <EmptyState
-                icon={Users}
-                title="No customer is owing you right now"
-                description="When someone buys on credit or part-payment at the counter, their name and balance will appear here."
-              />
-            ) : (
-              <>
-                {/* Mobile Debtor Cards (< 768px) */}
-                <div className="md:hidden divide-y theme-divider">
-                  {credits.map((c) => {
-                    const isOwing = c.status === 'OWING' && Number(c.balance_due) > 0;
-                    const cleanPhone = (c.phone || '')
-                      .replace(/\D/g, '')
-                      .replace(/^0/, '234');
-                    const whatsappMsg = encodeURIComponent(
-                      `Hello ${c.customer_name}, friendly reminder from ${
-                        currentUser.business_name || 'our provision store'
-                      } regarding your balance of ${formatNaira(
-                        c.balance_due
-                      )} for (${c.items_summary}). Thank you!`
-                    );
-                    return (
-                      <div key={c.id} className="p-4 space-y-2.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="font-extrabold font-luxury text-sm text-theme-primary">
-                              {c.customer_name}
-                            </div>
-                            <div className="text-xs text-theme-secondary">
-                              {c.phone || 'No phone saved'}
-                            </div>
-                          </div>
-                          <Badge variant={isOwing ? 'danger' : 'success'}>
-                            {isOwing ? `OWING ${formatNaira(c.balance_due)}` : 'SETTLED'}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-theme-secondary">{c.items_summary}</p>
-                        {isOwing && (
-                          <div className="flex items-center justify-end gap-2 pt-1">
-                            {cleanPhone && (
-                              <a
-                                href={`https://wa.me/${cleanPhone}?text=${whatsappMsg}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="liquid-glass-subtle px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1"
-                              >
-                                <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
-                              </a>
-                            )}
-                            <button
-                              onClick={() => {
-                                setRepayingCredit(c);
-                                setRepayAmount(String(c.balance_due));
-                                setRepayMethod('CASH');
-                              }}
-                              className="liquid-btn-primary px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
-                            >
-                              Collect Money
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+            {/* Main Debtors Card & Action Center */}
+            <div className="liquid-glass rounded-3xl overflow-hidden">
+              {/* Header Bar */}
+              <div
+                style={{ borderColor: 'var(--border-outer)' }}
+                className="p-4 sm:p-5 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div>
+                  <h3 className="font-extrabold font-luxury text-base sm:text-lg text-theme-primary flex items-center gap-2">
+                    <Users className="w-5 h-5 text-theme-primary" />
+                    Customers Owing the Shop (Debtors Ledger)
+                  </h3>
+                  <p className="text-xs text-theme-secondary mt-0.5">
+                    Track customer balances, set due dates, send WhatsApp reminders, and generate statements of account.
+                  </p>
                 </div>
 
-                {/* Desktop Debtor Table (>= 768px) */}
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead
-                      style={{
-                        backgroundColor: 'var(--bg-subtle)',
-                        borderColor: 'var(--border-outer)',
-                      }}
-                      className="border-b text-[11px] font-bold uppercase tracking-wider text-theme-secondary"
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCreditModal(true)}
+                    className="liquid-btn-primary px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <Plus className="w-4 h-4" /> Record Credit Sale
+                  </button>
+                </div>
+              </div>
+
+              {/* View Switcher, Filter Pills & Search Bar */}
+              <div
+                style={{ borderColor: 'var(--border-outer)', backgroundColor: 'var(--bg-subtle)' }}
+                className="p-3 sm:p-4 border-b space-y-3"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  {/* View Toggle: Accounts vs Slips */}
+                  <div className="flex items-center gap-1 bg-theme-input p-1 rounded-2xl border theme-divider">
+                    <button
+                      type="button"
+                      onClick={() => setDebtorViewMode('ACCOUNTS')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center gap-1.5 ${
+                        debtorViewMode === 'ACCOUNTS'
+                          ? 'liquid-btn-primary shadow-sm'
+                          : 'text-theme-secondary hover:text-theme-primary'
+                      }`}
                     >
-                      <tr>
-                        <th className="py-3.5 px-4">Customer Name & Phone</th>
-                        <th className="py-3.5 px-4">Goods Taken</th>
-                        <th className="py-3.5 px-4 text-right">Total Bill</th>
-                        <th className="py-3.5 px-4 text-right">Paid So Far</th>
-                        <th className="py-3.5 px-4 text-right">Balance Owing</th>
-                        <th className="py-3.5 px-4 text-center">Status</th>
-                        <th className="py-3.5 px-4 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y theme-divider">
-                      {credits.map((c) => {
-                        const isOwing = c.status === 'OWING' && Number(c.balance_due) > 0;
-                        const cleanPhone = (c.phone || '')
-                          .replace(/\D/g, '')
-                          .replace(/^0/, '234');
-                        const whatsappMsg = encodeURIComponent(
-                          `Hello ${c.customer_name}, friendly reminder from ${
-                            currentUser.business_name || 'our provision store'
-                          } regarding your balance of ${formatNaira(
-                            c.balance_due
-                          )} for (${c.items_summary}). Thank you!`
-                        );
-                        return (
-                          <tr
-                            key={c.id}
-                            className="hover:bg-white/30 dark:hover:bg-white/5"
-                          >
-                            <td className="py-3.5 px-4">
-                              <div className="font-extrabold font-luxury text-theme-primary">
-                                {c.customer_name}
-                              </div>
-                              <div className="text-xs text-theme-secondary">
-                                {c.phone || 'No phone saved'}
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 text-xs max-w-xs text-theme-secondary">
-                              {c.items_summary}
-                            </td>
-                            <td className="py-3.5 px-4 text-right tabular-nums text-theme-secondary">
-                              {formatNaira(c.total_amount)}
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-bold tabular-nums text-theme-inflow">
-                              {formatNaira(c.amount_paid)}
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums text-theme-outflow">
-                              {formatNaira(c.balance_due)}
-                            </td>
-                            <td className="py-3.5 px-4 text-center">
-                              <Badge variant={isOwing ? 'danger' : 'success'}>
-                                {isOwing ? 'OWING' : 'SETTLED'}
-                              </Badge>
-                            </td>
-                            <td className="py-3.5 px-4 text-right">
-                              {isOwing && (
-                                <div className="inline-flex items-center gap-2">
-                                  {cleanPhone && (
-                                    <a
-                                      href={`https://wa.me/${cleanPhone}?text=${whatsappMsg}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="liquid-glass-subtle p-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1"
-                                      title="Send WhatsApp reminder"
-                                    >
-                                      <MessageCircle className="w-4 h-4" />
-                                    </a>
+                      <Users className="w-3.5 h-3.5" /> By Customer Account ({customerLedgers.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDebtorViewMode('SLIPS')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center gap-1.5 ${
+                        debtorViewMode === 'SLIPS'
+                          ? 'liquid-btn-primary shadow-sm'
+                          : 'text-theme-secondary hover:text-theme-primary'
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Individual Slips ({credits.length})
+                    </button>
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { id: 'ALL', label: 'All' },
+                      { id: 'OWING', label: `Owing (${debtorMetrics.owingCustomersCount})` },
+                      { id: 'OVERDUE', label: `Overdue (${debtorMetrics.overdueCount})` },
+                      { id: 'SETTLED', label: 'Settled' },
+                    ].map((f) => {
+                      const active = debtorFilter === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setDebtorFilter(f.id)}
+                          className={`px-2.5 py-1 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                            active
+                              ? 'bg-primary/20 border-primary text-theme-primary'
+                              : 'liquid-glass-subtle border-theme-border text-theme-secondary hover:text-theme-primary'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-theme-secondary" />
+                  <input
+                    type="text"
+                    value={debtorSearch}
+                    onChange={(e) => setDebtorSearch(e.target.value)}
+                    placeholder="Search by customer name, phone number, market address, or goods taken..."
+                    className="w-full pl-9 pr-9 py-2 rounded-xl text-xs bg-theme-input border border-theme-border text-theme-primary placeholder-theme-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  {debtorSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setDebtorSearch('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-theme-muted hover:text-theme-primary cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* VIEW 1: AGGREGATE CUSTOMER ACCOUNTS */}
+              {debtorViewMode === 'ACCOUNTS' && (
+                <>
+                  {filteredLedgers.length === 0 ? (
+                    <EmptyState
+                      icon={Users}
+                      title={
+                        debtorSearch
+                          ? `No debtors match "${debtorSearch}"`
+                          : debtorFilter === 'OVERDUE'
+                          ? 'Great news! No overdue debtors right now'
+                          : debtorFilter === 'OWING'
+                          ? 'No customer is currently owing you'
+                          : 'No debtor accounts found'
+                      }
+                      description="When customers buy on credit or part-payment at checkout, all their credit transactions will automatically group under one unified customer balance here."
+                    />
+                  ) : (
+                    <>
+                      {/* Mobile Cards for Customer Accounts (< 768px) */}
+                      <div className="md:hidden divide-y theme-divider">
+                        {filteredLedgers.map((l) => {
+                          const isOwing = Number(l.total_balance_due) > 0;
+                          return (
+                            <div key={l.customer_name} className="p-4 space-y-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-extrabold font-luxury text-base text-theme-primary">
+                                    {l.customer_name}
+                                  </div>
+                                  <div className="text-xs text-theme-secondary flex items-center gap-2 mt-0.5">
+                                    {l.phone && <span>{l.phone}</span>}
+                                    {l.customer_address && (
+                                      <span className="truncate max-w-[150px]">• {l.customer_address}</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  {isOwing ? (
+                                    l.is_overdue ? (
+                                      <Badge variant="danger">
+                                        <AlertTriangle className="w-3 h-3 mr-1 inline" />
+                                        {l.max_days_overdue > 0 ? `${l.max_days_overdue}d Overdue` : 'Overdue'}
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="warning">Owing</Badge>
+                                    )
+                                  ) : (
+                                    <Badge variant="success">Settled</Badge>
                                   )}
+                                  <div className="text-[11px] font-mono text-theme-muted mt-1">
+                                    {l.active_credits_count} open {l.active_credits_count === 1 ? 'slip' : 'slips'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Balance & Totals Grid */}
+                              <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-theme-input/50 border theme-divider text-center">
+                                <div>
+                                  <div className="text-[10px] text-theme-muted uppercase">Billed</div>
+                                  <div className="text-xs font-bold text-theme-primary tabular-nums">
+                                    {formatNaira(l.total_credit_taken)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] text-theme-muted uppercase">Paid</div>
+                                  <div className="text-xs font-bold text-theme-inflow tabular-nums">
+                                    {formatNaira(l.total_paid)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] text-theme-muted uppercase font-bold">Balance</div>
+                                  <div className="text-xs font-extrabold text-theme-outflow tabular-nums">
+                                    {formatNaira(l.total_balance_due)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Earliest Due Date notice */}
+                              {isOwing && l.earliest_due_date && (
+                                <div className="text-[11px] text-theme-secondary flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5 text-amber-500" />
+                                  <span>
+                                    Earliest due:{' '}
+                                    {new Date(l.earliest_due_date).toLocaleDateString('en-GB', {
+                                      day: 'numeric',
+                                      month: 'short',
+                                    })}
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Quick Action Buttons */}
+                              <div className="flex flex-wrap items-center justify-end gap-2 pt-1 border-t theme-divider">
+                                <button
+                                  type="button"
+                                  onClick={() => setWhatsAppModalTarget(l)}
+                                  className="liquid-glass-subtle px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 cursor-pointer hover:text-emerald-500"
+                                  title="Send WhatsApp payment reminder"
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5 text-emerald-500" /> WhatsApp
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setStatementModalCustomer(l.customer_name)}
+                                  className="liquid-glass-subtle px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 cursor-pointer hover:text-primary"
+                                  title="View and print statement of account"
+                                >
+                                  <FileText className="w-3.5 h-3.5" /> Statement
+                                </button>
+                                {isOwing && (
                                   <button
-                                    onClick={() => {
-                                      setRepayingCredit(c);
-                                      setRepayAmount(String(c.balance_due));
-                                      setRepayMethod('CASH');
-                                    }}
-                                    className="liquid-btn-primary px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
+                                    type="button"
+                                    onClick={() => setRepaymentModalTarget(l)}
+                                    className="liquid-btn-primary px-3.5 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer"
                                   >
                                     Collect Money
                                   </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Desktop Table for Customer Accounts (>= 768px) */}
+                      <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead
+                            style={{
+                              backgroundColor: 'var(--bg-subtle)',
+                              borderColor: 'var(--border-outer)',
+                            }}
+                            className="border-b text-[11px] font-bold uppercase tracking-wider text-theme-secondary"
+                          >
+                            <tr>
+                              <th className="py-3.5 px-4">Customer Name & Contact</th>
+                              <th className="py-3.5 px-4 text-center">Open Slips</th>
+                              <th className="py-3.5 px-4 text-right">Total Goods Taken</th>
+                              <th className="py-3.5 px-4 text-right">Total Paid</th>
+                              <th className="py-3.5 px-4 text-right">Balance Owed</th>
+                              <th className="py-3.5 px-4 text-center">Status / Due Date</th>
+                              <th className="py-3.5 px-4 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y theme-divider">
+                            {filteredLedgers.map((l) => {
+                              const isOwing = Number(l.total_balance_due) > 0;
+                              return (
+                                <tr
+                                  key={l.customer_name}
+                                  className="hover:bg-white/30 dark:hover:bg-white/5 transition"
+                                >
+                                  <td className="py-3.5 px-4">
+                                    <div className="font-extrabold font-luxury text-theme-primary">
+                                      {l.customer_name}
+                                    </div>
+                                    <div className="text-xs text-theme-secondary flex items-center gap-2 mt-0.5">
+                                      {l.phone && <span>{l.phone}</span>}
+                                      {l.customer_address && (
+                                        <span className="truncate max-w-xs text-theme-muted">
+                                          • {l.customer_address}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    <span className="inline-block px-2 py-0.5 rounded-md bg-theme-input text-xs font-mono font-bold text-theme-secondary">
+                                      {l.active_credits_count} active / {l.credit_count} total
+                                    </span>
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right tabular-nums text-theme-secondary">
+                                    {formatNaira(l.total_credit_taken)}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right font-bold tabular-nums text-theme-inflow">
+                                    {formatNaira(l.total_paid)}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums text-theme-outflow text-base">
+                                    {formatNaira(l.total_balance_due)}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    {isOwing ? (
+                                      l.is_overdue ? (
+                                        <div className="space-y-0.5">
+                                          <Badge variant="danger">
+                                            <AlertTriangle className="w-3 h-3 mr-1 inline" />
+                                            {l.max_days_overdue > 0 ? `${l.max_days_overdue}d Overdue` : 'Overdue'}
+                                          </Badge>
+                                          {l.earliest_due_date && (
+                                            <div className="text-[10px] text-rose-500 font-mono">
+                                              Due {new Date(l.earliest_due_date).toLocaleDateString('en-GB')}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-0.5">
+                                          <Badge variant="warning">Owing</Badge>
+                                          {l.earliest_due_date && (
+                                            <div className="text-[10px] text-theme-muted font-mono">
+                                              Due {new Date(l.earliest_due_date).toLocaleDateString('en-GB')}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    ) : (
+                                      <Badge variant="success">Settled</Badge>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right">
+                                    <div className="inline-flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setWhatsAppModalTarget(l)}
+                                        className="liquid-glass-subtle p-2 rounded-xl text-xs font-semibold hover:text-emerald-500 transition cursor-pointer"
+                                        title="Send WhatsApp payment reminder"
+                                      >
+                                        <MessageCircle className="w-4 h-4 text-emerald-500" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setStatementModalCustomer(l.customer_name)}
+                                        className="liquid-glass-subtle p-2 rounded-xl text-xs font-semibold hover:text-primary transition cursor-pointer"
+                                        title="View Customer Statement of Account"
+                                      >
+                                        <FileText className="w-4 h-4 text-theme-secondary" />
+                                      </button>
+                                      {isOwing && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setRepaymentModalTarget(l)}
+                                          className="liquid-btn-primary px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
+                                        >
+                                          Collect Money
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* VIEW 2: INDIVIDUAL CREDIT SLIPS */}
+              {debtorViewMode === 'SLIPS' && (
+                <>
+                  {filteredCredits.length === 0 ? (
+                    <EmptyState
+                      icon={FileText}
+                      title={
+                        debtorSearch
+                          ? `No credit slips match "${debtorSearch}"`
+                          : debtorFilter === 'OVERDUE'
+                          ? 'No overdue credit slips'
+                          : debtorFilter === 'OWING'
+                          ? 'No owing credit slips'
+                          : 'No credit slips recorded yet'
+                      }
+                      description="Individual purchases on credit or part-payment made at the counter are itemized here."
+                    />
+                  ) : (
+                    <>
+                      {/* Mobile Cards for Slips (< 768px) */}
+                      <div className="md:hidden divide-y theme-divider">
+                        {filteredCredits.map((c) => {
+                          const isOwing = c.status === 'OWING' && Number(c.balance_due) > 0;
+                          return (
+                            <div key={c.id} className="p-4 space-y-2.5">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-extrabold font-luxury text-sm text-theme-primary">
+                                    {c.customer_name}
+                                  </div>
+                                  <div className="text-xs text-theme-secondary">
+                                    {c.phone || 'No phone saved'}
+                                  </div>
                                 </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
+                                <div className="text-right">
+                                  {isOwing ? (
+                                    c.is_overdue ? (
+                                      <Badge variant="danger">
+                                        <AlertTriangle className="w-3 h-3 mr-1 inline" />
+                                        {c.days_overdue > 0 ? `${c.days_overdue}d Overdue` : 'Overdue'}
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="warning">OWING {formatNaira(c.balance_due)}</Badge>
+                                    )
+                                  ) : (
+                                    <Badge variant="success">SETTLED</Badge>
+                                  )}
+                                </div>
+                              </div>
+
+                              <p className="text-xs text-theme-secondary bg-theme-input/40 p-2 rounded-lg font-mono">
+                                {c.items_summary}
+                              </p>
+
+                              <div className="flex items-center justify-between text-xs text-theme-muted">
+                                <span>Total: {formatNaira(c.total_amount)}</span>
+                                <span>Paid: {formatNaira(c.amount_paid)}</span>
+                                {c.due_date && (
+                                  <span className={c.is_overdue ? 'text-rose-500 font-bold' : ''}>
+                                    Due: {new Date(c.due_date).toLocaleDateString('en-GB')}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center justify-end gap-2 pt-1 border-t theme-divider">
+                                <button
+                                  type="button"
+                                  onClick={() => setWhatsAppModalTarget(c)}
+                                  className="liquid-glass-subtle px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 cursor-pointer hover:text-emerald-500"
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5 text-emerald-500" /> WhatsApp
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setStatementModalCustomer(c.customer_name)}
+                                  className="liquid-glass-subtle px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <FileText className="w-3.5 h-3.5" /> Statement
+                                </button>
+                                {isOwing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRepaymentModalTarget(c)}
+                                    className="liquid-btn-primary px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
+                                  >
+                                    Pay Slip
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Desktop Table for Slips (>= 768px) */}
+                      <div className="hidden md:block overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead
+                            style={{
+                              backgroundColor: 'var(--bg-subtle)',
+                              borderColor: 'var(--border-outer)',
+                            }}
+                            className="border-b text-[11px] font-bold uppercase tracking-wider text-theme-secondary"
+                          >
+                            <tr>
+                              <th className="py-3.5 px-4">Customer Name & Phone</th>
+                              <th className="py-3.5 px-4">Goods Taken</th>
+                              <th className="py-3.5 px-4 text-right">Total Bill</th>
+                              <th className="py-3.5 px-4 text-right">Paid So Far</th>
+                              <th className="py-3.5 px-4 text-right">Balance Owing</th>
+                              <th className="py-3.5 px-4 text-center">Due Date & Status</th>
+                              <th className="py-3.5 px-4 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y theme-divider">
+                            {filteredCredits.map((c) => {
+                              const isOwing = c.status === 'OWING' && Number(c.balance_due) > 0;
+                              return (
+                                <tr
+                                  key={c.id}
+                                  className="hover:bg-white/30 dark:hover:bg-white/5 transition"
+                                >
+                                  <td className="py-3.5 px-4">
+                                    <div className="font-extrabold font-luxury text-theme-primary">
+                                      {c.customer_name}
+                                    </div>
+                                    <div className="text-xs text-theme-secondary">
+                                      {c.phone || 'No phone saved'}
+                                    </div>
+                                  </td>
+                                  <td className="py-3.5 px-4 text-xs max-w-xs text-theme-secondary">
+                                    {c.items_summary}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right tabular-nums text-theme-secondary">
+                                    {formatNaira(c.total_amount)}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right font-bold tabular-nums text-theme-inflow">
+                                    {formatNaira(c.amount_paid)}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right font-extrabold font-luxury tabular-nums text-theme-outflow">
+                                    {formatNaira(c.balance_due)}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-center">
+                                    {isOwing ? (
+                                      c.is_overdue ? (
+                                        <div className="space-y-0.5">
+                                          <Badge variant="danger">
+                                            <AlertTriangle className="w-3 h-3 mr-1 inline" />
+                                            {c.days_overdue > 0 ? `${c.days_overdue}d Overdue` : 'Overdue'}
+                                          </Badge>
+                                          {c.due_date && (
+                                            <div className="text-[10px] text-rose-500 font-mono">
+                                              Due {new Date(c.due_date).toLocaleDateString('en-GB')}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-0.5">
+                                          <Badge variant="warning">OWING</Badge>
+                                          {c.due_date && (
+                                            <div className="text-[10px] text-theme-muted font-mono">
+                                              Due {new Date(c.due_date).toLocaleDateString('en-GB')}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    ) : (
+                                      <Badge variant="success">SETTLED</Badge>
+                                    )}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right">
+                                    <div className="inline-flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setWhatsAppModalTarget(c)}
+                                        className="liquid-glass-subtle p-2 rounded-xl text-xs font-semibold hover:text-emerald-500 transition cursor-pointer"
+                                        title="Send WhatsApp payment reminder"
+                                      >
+                                        <MessageCircle className="w-4 h-4 text-emerald-500" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setStatementModalCustomer(c.customer_name)}
+                                        className="liquid-glass-subtle p-2 rounded-xl text-xs font-semibold hover:text-primary transition cursor-pointer"
+                                        title="View Customer Statement of Account"
+                                      >
+                                        <FileText className="w-4 h-4 text-theme-secondary" />
+                                      </button>
+                                      {isOwing && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setRepaymentModalTarget(c)}
+                                          className="liquid-btn-primary px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
+                                        >
+                                          Pay Slip
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -4180,64 +4722,53 @@ function AppShell() {
         </form>
       </Modal>
 
-      {/* MODAL 4: COLLECT DEBT FROM CUSTOMER */}
-      <Modal
-        isOpen={Boolean(repayingCredit)}
-        onClose={() => setRepayingCredit(null)}
-        title={`Collect Money from ${repayingCredit?.customer_name}`}
-        subtitle={`Goods taken: ${repayingCredit?.items_summary} | Balance Owing: ${formatNaira(
-          repayingCredit?.balance_due
-        )}`}
-      >
-        <form onSubmit={handleRepayDebt} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Amount Paid ({currencySymbol})
-              </label>
-              <input
-                type="number"
-                required
-                max={repayingCredit?.balance_due}
-                value={repayAmount}
-                onChange={(e) => setRepayAmount(e.target.value)}
-                className="liquid-input w-full rounded-xl px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold mb-1 text-theme-primary">
-                Payment Channel
-              </label>
-              <select
-                value={repayMethod}
-                onChange={(e) => setRepayMethod(e.target.value)}
-                className="liquid-input w-full rounded-xl px-3 py-2 text-sm"
-              >
-                <option value="CASH">Cash</option>
-                <option value="BANK_TRANSFER">Bank Transfer</option>
-                <option value="POS">POS Terminal</option>
-              </select>
-            </div>
-          </div>
+      {/* DEBTOR BOOK MODALS */}
+      <WhatsAppReminderModal
+        isOpen={Boolean(whatsAppModalTarget)}
+        onClose={() => setWhatsAppModalTarget(null)}
+        debtor={whatsAppModalTarget}
+        storeName={currentUser?.business_name || 'Our Provision Store'}
+        storePhone={currentUser?.phone || ''}
+        formatNaira={formatNaira}
+      />
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setRepayingCredit(null)}
-              className="px-4 py-2 text-xs font-semibold cursor-pointer text-theme-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="liquid-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer"
-            >
-              {submitting ? 'Recording...' : 'Confirm & Add to Cashbook'}
-            </button>
-          </div>
-        </form>
-      </Modal>
+      <CustomerStatementModal
+        isOpen={Boolean(statementModalCustomer)}
+        onClose={() => setStatementModalCustomer(null)}
+        customerName={statementModalCustomer}
+        storeName={currentUser?.business_name || 'StockFlow Store'}
+        storePhone={currentUser?.phone || ''}
+        storeAddress={currentUser?.address || ''}
+        apiFetch={apiFetch}
+        formatNaira={formatNaira}
+      />
+
+      <CustomerRepaymentModal
+        isOpen={Boolean(repaymentModalTarget || repayingCredit)}
+        onClose={() => {
+          setRepaymentModalTarget(null);
+          setRepayingCredit(null);
+        }}
+        target={repaymentModalTarget || repayingCredit}
+        onSuccess={() => {
+          showSuccessToast('Debt payment recorded and added to Cashbook!');
+          refreshDebtors();
+        }}
+        apiFetch={apiFetch}
+        formatNaira={formatNaira}
+      />
+
+      <CustomerCreditModal
+        isOpen={showAddCreditModal}
+        onClose={() => setShowAddCreditModal(false)}
+        onSuccess={() => {
+          showSuccessToast('Credit sale recorded successfully!');
+          refreshDebtors();
+        }}
+        apiFetch={apiFetch}
+        existingCustomers={customerLedgers}
+        formatNaira={formatNaira}
+      />
 
       {/* INSTANT DIGITAL SALE RECEIPT (PRINTABLE THERMAL SLIP & WHATSAPP / SHARE) */}
       <ReceiptModal

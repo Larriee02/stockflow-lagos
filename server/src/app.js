@@ -556,6 +556,33 @@ app.get(
   })
 );
 
+app.get(
+  '/api/v1/credits/customers',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const ledgers = await cashbookService.getCustomerLedgers(req.user.id);
+    res.json(ledgers);
+  })
+);
+
+app.get(
+  '/api/v1/credits/customers/:name/statement',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const statement = await cashbookService.getCustomerStatement(req.user.id, req.params.name);
+    res.json(statement);
+  })
+);
+
+app.post(
+  '/api/v1/credits/customers/:name/repay',
+  requireApprovedUser,
+  asyncHandler(async (req, res) => {
+    const result = await cashbookService.repayCustomerDebt(req.user.id, req.params.name, req.body);
+    res.json(result);
+  })
+);
+
 app.post(
   '/api/v1/credits',
   requireApprovedUser,

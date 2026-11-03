@@ -290,19 +290,38 @@ class CashbookRepository {
       `SELECT * FROM credit_records ${where} ORDER BY status DESC, updated_at DESC`,
       params
     );
-    return rows;
+
+    const now = new Date();
+    return rows.map((r) => {
+      const balance = Number(r.balance_due || 0);
+      const dueDate = r.due_date ? new Date(r.due_date) : null;
+      const isOverdue = Boolean(dueDate && dueDate < now && balance > 0);
+      const daysOverdue = isOverdue
+        ? Math.max(1, Math.ceil((now.getTime() - dueDate.getTime()) / 86400000))
+        : 0;
+      return {
+        ...r,
+        is_overdue: isOverdue,
+        days_overdue: daysOverdue,
+      };
+    });
   }
 
-  async createCreditRecord(userId, data) {
+  async createCreditRecord(userId, data, client = db) {
     const total = Number(data.total_amount);
     const paid = Number(data.amount_paid || 0);
     const balance = Math.max(0, total - paid);
     const status = balance <= 0 ? 'PAID' : 'OWING';
+    const dueDate = data.due_date
+      ? new Date(data.due_date).toISOString()
+      : new Date(Date.now() + 7 * 86400000).toISOString();
 
-    const { rows } = await db.query(
-      `INSERT INTO credit_records (user_id, customer_name, phone, items_summary, total_amount, amount_paid, balance_due, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
+    const { rows } = await client.query(
+      `INSERT INTO credit_records (
+        user_id, customer_name, phone, items_summary, total_amount, amount_paid,
+        balance_due, status, due_date, customer_address, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *`,
       [
         userId,
         data.customer_name.trim(),
@@ -312,9 +331,82 @@ class CashbookRepository {
         paid,
         balance,
         status,
+        dueDate,
+        data.customer_address?.trim() || null,
+        data.notes?.trim() || null,
+      ]
+    );
+
+    const row = rows[0];
+
+    if (paid > 0) {
+      await client.query(
+        `INSERT INTO credit_repayments (
+          user_id, credit_record_id, customer_name, amount, payment_method, note
+        ) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          userId,
+          row.id,
+          data.customer_name.trim(),
+          paid,
+          data.payment_method || 'CASH',
+          data.repayment_note?.trim() || 'Initial down-payment at creation',
+        ]
+      );
+    }
+
+    const now = new Date();
+    const dDate = row.due_date ? new Date(row.due_date) : null;
+    const isOverdue = Boolean(dDate && dDate < now && Number(row.balance_due) > 0);
+    const daysOverdue = isOverdue
+      ? Math.max(1, Math.ceil((now.getTime() - dDate.getTime()) / 86400000))
+      : 0;
+
+    return {
+      ...row,
+      is_overdue: isOverdue,
+      days_overdue: daysOverdue,
+    };
+  }
+
+  async recordCreditRepayment(userId, data, client = db) {
+    const { rows } = await client.query(
+      `INSERT INTO credit_repayments (
+        user_id, credit_record_id, customer_name, amount, payment_method, note
+      ) VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *`,
+      [
+        userId,
+        data.credit_record_id || null,
+        data.customer_name.trim(),
+        Number(data.amount),
+        data.payment_method || 'CASH',
+        data.note?.trim() || null,
       ]
     );
     return rows[0];
+  }
+
+  async findCreditRepayments(userId, { customer_name, credit_record_id } = {}) {
+    const conditions = ['user_id = $1'];
+    const params = [userId];
+
+    if (credit_record_id) {
+      params.push(Number(credit_record_id));
+      conditions.push(`credit_record_id = $${params.length}`);
+    }
+    if (customer_name) {
+      params.push(customer_name.trim().toLowerCase());
+      conditions.push(`LOWER(customer_name) = $${params.length}`);
+    }
+
+    const { rows } = await db.query(
+      `SELECT * FROM credit_repayments
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY created_at DESC, id DESC`,
+      params
+    );
+    return rows;
   }
 }
 
