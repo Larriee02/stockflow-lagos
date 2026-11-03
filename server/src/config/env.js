@@ -58,8 +58,9 @@ const env = {
   TERMII_SENDER_ID: (process.env.TERMII_SENDER_ID || 'StockFlow').trim(),
   SMS_WEBHOOK_URL: (process.env.SMS_WEBHOOK_URL || '').trim(),
 
-  // Allow preview of OTP in response for development / live testing without requiring external credentials
-  ALLOW_OTP_PREVIEW: bool(process.env.ALLOW_OTP_PREVIEW, true),
+  // Allow preview of OTP in response for development / sandbox testing only.
+  // Defaults to FALSE in production so codes are never exposed over the wire.
+  ALLOW_OTP_PREVIEW: bool(process.env.ALLOW_OTP_PREVIEW, !IS_PROD),
 
   SUPPORT_WHATSAPP: (process.env.SUPPORT_WHATSAPP || '2348000000000').replace(/[^\d]/g, ''),
   ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN || '',

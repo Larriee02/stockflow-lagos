@@ -137,12 +137,16 @@ class AuthService {
     const requestedAdmin = String(payload.role || '').toUpperCase() === 'ADMIN';
     const isFirstOrConfiguredAdmin =
       adminCount === 0 ||
-      requestedAdmin ||
       Boolean(env.ADMIN_EMAIL && email === env.ADMIN_EMAIL);
 
-    const role = isFirstOrConfiguredAdmin ? 'ADMIN' : 'USER';
-    const status =
-      isFirstOrConfiguredAdmin || env.AUTO_APPROVE_USERS ? 'APPROVED' : 'PENDING';
+    // Initial founder or configured admin is approved immediately.
+    // Subsequent admin requests are kept PENDING for existing admin approval to prevent privilege escalation.
+    const role = isFirstOrConfiguredAdmin || requestedAdmin ? 'ADMIN' : 'USER';
+    const status = isFirstOrConfiguredAdmin
+      ? 'APPROVED'
+      : env.AUTO_APPROVE_USERS && !requestedAdmin
+      ? 'APPROVED'
+      : 'PENDING';
     const currency = String(payload.currency || 'NGN').trim().toUpperCase();
 
     const userId = await db.withTransaction(async (tx) => {
@@ -335,12 +339,16 @@ class AuthService {
       const requestedAdmin = String(payload.role || '').toUpperCase() === 'ADMIN';
       const isFirstOrConfiguredAdmin =
         adminCount === 0 ||
-        requestedAdmin ||
         Boolean(env.ADMIN_EMAIL && profile.email === env.ADMIN_EMAIL);
 
-      const role = isFirstOrConfiguredAdmin ? 'ADMIN' : 'USER';
-      const status =
-        isFirstOrConfiguredAdmin || env.AUTO_APPROVE_USERS ? 'APPROVED' : 'PENDING';
+      // Initial founder or configured admin is approved immediately.
+      // Subsequent admin requests are kept PENDING for existing admin approval to prevent privilege escalation.
+      const role = isFirstOrConfiguredAdmin || requestedAdmin ? 'ADMIN' : 'USER';
+      const status = isFirstOrConfiguredAdmin
+        ? 'APPROVED'
+        : env.AUTO_APPROVE_USERS && !requestedAdmin
+        ? 'APPROVED'
+        : 'PENDING';
       const businessName =
         String(payload.business_name || '').trim() || `${profile.fullName}'s Store`;
       const currency = String(payload.currency || 'NGN').trim().toUpperCase();

@@ -12,14 +12,33 @@ const adminService = require('./services/admin.service');
 const inventoryService = require('./services/inventory.service');
 const cashbookService = require('./services/cashbook.service');
 
+const { createRateLimiter } = require('./utils/rateLimiter');
+
 const app = express();
 
 // Security headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (env.IS_PROD) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
+});
+
+// Rate limiters for authentication & OTP security
+const authLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: 'Too many authentication attempts.',
+});
+
+const otpLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Too many OTP requests from this connection.',
 });
 
 // Configurable CORS
@@ -132,6 +151,7 @@ app.get('/api/v1/auth/config', (req, res) => {
 
 app.post(
   '/api/v1/auth/otp/request',
+  otpLimiter,
   asyncHandler(async (req, res) => {
     const { purpose } = req.body;
     if (String(purpose).toUpperCase() === 'SIGNUP') {
@@ -145,6 +165,7 @@ app.post(
 
 app.post(
   '/api/v1/auth/otp/verify',
+  authLimiter,
   asyncHandler(async (req, res) => {
     const otpService = require('./services/otp.service');
     const result = await otpService.verifyOtp(req.body);
@@ -154,6 +175,7 @@ app.post(
 
 app.post(
   '/api/v1/auth/register',
+  authLimiter,
   asyncHandler(async (req, res) => {
     const { user, token } = await authService.register(req.body, clientIp(req));
     await issueSessionCookie(res, { id: user.id, token_version: 0 });
@@ -163,6 +185,7 @@ app.post(
 
 app.post(
   '/api/v1/auth/login',
+  authLimiter,
   asyncHandler(async (req, res) => {
     const result = await authService.login(req.body, clientIp(req));
     if (result.otpRequired) {
@@ -176,6 +199,7 @@ app.post(
 
 app.post(
   '/api/v1/auth/oauth',
+  authLimiter,
   asyncHandler(async (req, res) => {
     const { user, token, isNewUser } = await authService.oauthSignIn(req.body, clientIp(req));
     const authUser = await userRepo.findAuthById(user.id);
