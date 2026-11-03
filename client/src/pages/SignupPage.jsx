@@ -46,7 +46,7 @@ export function SignupPage({ darkMode, setDarkMode, onAuthenticated, onNavigate 
     role: 'USER',
     password: '',
     confirm_password: '',
-    seed_catalog: false,
+    seed_catalog: true,
   });
 
   const handleRequestOtp = async (e) => {
@@ -506,7 +506,7 @@ export function SignupPage({ darkMode, setDarkMode, onAuthenticated, onNavigate 
                       }
                     />
                     <span>
-                      Include sample retail product templates (with <strong>0 initial stock</strong>)
+                      Pre-load 12 popular retail provisions (Indomie, Peak Milk, Milo, Sugar) ready to count and sell
                     </span>
                   </label>
 

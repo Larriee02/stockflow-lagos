@@ -68,6 +68,9 @@ import { CustomerCreditModal } from './components/debtors/CustomerCreditModal';
 import { FinancialMetricsOverview } from './components/analytics/FinancialMetricsOverview';
 import { DailyChannelReconciliationModal } from './components/analytics/DailyChannelReconciliationModal';
 import { ProfitAndLossStatement } from './components/analytics/ProfitAndLossStatement';
+import { OnboardingJourneyCard } from './components/onboarding/OnboardingJourneyCard';
+import { QuickStockModal } from './components/onboarding/QuickStockModal';
+import { BusinessSetupModal } from './components/onboarding/BusinessSetupModal';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
@@ -279,6 +282,15 @@ function AppShell() {
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [showBatchAdjustModal, setShowBatchAdjustModal] = useState(false);
+  const [showBusinessSetupModal, setShowBusinessSetupModal] = useState(false);
+  const [showQuickStockModal, setShowQuickStockModal] = useState(false);
+  const [isOnboardingDismissed, setIsOnboardingDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('stockflow_hide_onboarding') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileForm, setProfileForm] = useState({
     full_name: '',
@@ -1921,6 +1933,37 @@ function AppShell() {
             <span>Currency: {currencyCode} ({currencySymbol})</span>
           </button>
         </div>
+
+        {/* Onboarding Launch Journey Card */}
+        <OnboardingJourneyCard
+          currentUser={currentUser}
+          products={products}
+          transactions={transactions}
+          movements={movements}
+          cashbookSession={cashbookSession}
+          onOpenBusinessSetup={() => setShowBusinessSetupModal(true)}
+          onSeedStarter={handleSeedStarterCatalog}
+          onAddProduct={() => {
+            setEditingProduct(null);
+            setProductForm(INITIAL_PRODUCT_FORM);
+            setShowProductModal(true);
+          }}
+          onOpenQuickStock={() => setShowQuickStockModal(true)}
+          onGoToCounter={() => handleSelectTab('counter', false)}
+          isDismissed={isOnboardingDismissed}
+          onToggleDismiss={() => {
+            setIsOnboardingDismissed((prev) => {
+              const next = !prev;
+              try {
+                localStorage.setItem('stockflow_hide_onboarding', String(next));
+              } catch {
+                // ignore
+              }
+              return next;
+            });
+          }}
+          formatCurrency={formatNaira}
+        />
 
         {/* TAB 1: QUICK SELL (SHOP COUNTER) */}
         {activeTab === 'counter' && (
@@ -5150,6 +5193,33 @@ function AppShell() {
         toastSuccess={(msg) => showSuccessToast(msg)}
         toastError={(msg) => toastError?.(msg) || alert(msg)}
         onSuccess={() => fetchAllData()}
+      />
+
+      {/* ONBOARDING: QUICK OPENING STOCK COUNT MODAL */}
+      <QuickStockModal
+        isOpen={showQuickStockModal}
+        onClose={() => setShowQuickStockModal(false)}
+        products={products}
+        apiFetch={apiFetch}
+        formatCurrency={formatNaira}
+        toastSuccess={(msg) => showSuccessToast(msg)}
+        toastError={(msg) => toastError?.(msg) || alert(msg)}
+        onSuccess={() => fetchAllData()}
+      />
+
+      {/* ONBOARDING: STORE PROFILE & CASH FLOAT SETUP MODAL */}
+      <BusinessSetupModal
+        isOpen={showBusinessSetupModal}
+        onClose={() => setShowBusinessSetupModal(false)}
+        currentUser={currentUser}
+        cashbookSession={cashbookSession}
+        apiFetch={apiFetch}
+        toastSuccess={(msg) => showSuccessToast(msg)}
+        toastError={(msg) => toastError?.(msg) || alert(msg)}
+        onSuccess={(updatedUser) => {
+          if (updatedUser) setCurrentUser(updatedUser);
+          fetchAllData();
+        }}
       />
 
       {/* DAILY CASHBOOK OPENING & CLOSING BALANCE REGISTER MODAL */}

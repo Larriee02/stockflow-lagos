@@ -34,7 +34,7 @@ const env = {
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || '',
   ADMIN_NAME: process.env.ADMIN_NAME || 'Administrator',
 
-  AUTO_APPROVE_USERS: bool(process.env.AUTO_APPROVE_USERS, false),
+  AUTO_APPROVE_USERS: bool(process.env.AUTO_APPROVE_USERS, true),
 
   GOOGLE_CLIENT_ID: (process.env.GOOGLE_CLIENT_ID || '').trim(),
   APPLE_CLIENT_ID: (process.env.APPLE_CLIENT_ID || '').trim(),
