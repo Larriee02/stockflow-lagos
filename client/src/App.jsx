@@ -45,6 +45,7 @@ import {
   UserPlus,
   Clock,
   MapPin,
+  Scale,
 } from 'lucide-react';
 import { useDebounce } from './hooks/useDebounce';
 import { Modal } from './components/ui/Modal';
@@ -64,6 +65,9 @@ import { WhatsAppReminderModal } from './components/debtors/WhatsAppReminderModa
 import { CustomerStatementModal } from './components/debtors/CustomerStatementModal';
 import { CustomerRepaymentModal } from './components/debtors/CustomerRepaymentModal';
 import { CustomerCreditModal } from './components/debtors/CustomerCreditModal';
+import { FinancialMetricsOverview } from './components/analytics/FinancialMetricsOverview';
+import { DailyChannelReconciliationModal } from './components/analytics/DailyChannelReconciliationModal';
+import { ProfitAndLossStatement } from './components/analytics/ProfitAndLossStatement';
 import { AccountStatusScreen } from './components/auth/AccountStatusScreen';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
@@ -263,6 +267,12 @@ function AppShell() {
   const [repayAmount, setRepayAmount] = useState('');
   const [repayMethod, setRepayMethod] = useState('CASH');
 
+  // Analytics & Daily Channel Reconciliation State
+  const [analyticsDateRange, setAnalyticsDateRange] = useState('TODAY'); // 'TODAY' | 'WEEK' | 'MONTH' | 'CUSTOM'
+  const [analyticsStartDate, setAnalyticsStartDate] = useState('');
+  const [analyticsEndDate, setAnalyticsEndDate] = useState('');
+  const [showReconcileModal, setShowReconcileModal] = useState(false);
+
   // Discretionary MVP Feature Modals
   const [lastReceipt, setLastReceipt] = useState(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
@@ -368,7 +378,7 @@ function AppShell() {
           apiFetch('/api/v1/products', { signal }),
           apiFetch('/api/v1/transactions?limit=500', { signal }),
           apiFetch('/api/v1/cashbook/sessions', { signal }).catch(() => null),
-          apiFetch('/api/v1/inventory/movements?limit=250', { signal }),
+          apiFetch('/api/v1/inventory/movements?limit=1000', { signal }),
           apiFetch('/api/v1/credits', { signal }),
           apiFetch('/api/v1/credits/customers', { signal }).catch(() => []),
         ]);
@@ -870,6 +880,172 @@ function AppShell() {
       return true;
     });
   }, [credits, debouncedDebtorSearch, debtorFilter]);
+
+  // Analytics & Profit & Loss Period Calculations
+  const analyticsPeriodBounds = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
+
+    if (analyticsDateRange === 'TODAY') {
+      return {
+        startMs: startOfToday,
+        endMs: endOfToday,
+        label: "Today's Trading",
+      };
+    }
+    if (analyticsDateRange === 'WEEK') {
+      return {
+        startMs: now.getTime() - 7 * 86400000,
+        endMs: endOfToday,
+        label: 'Last 7 Days (This Week)',
+      };
+    }
+    if (analyticsDateRange === 'MONTH') {
+      return {
+        startMs: now.getTime() - 30 * 86400000,
+        endMs: endOfToday,
+        label: 'Last 30 Days (This Month)',
+      };
+    }
+    if (analyticsDateRange === 'CUSTOM') {
+      const s = analyticsStartDate ? new Date(`${analyticsStartDate}T00:00:00.000`).getTime() : 0;
+      const e = analyticsEndDate ? new Date(`${analyticsEndDate}T23:59:59.999`).getTime() : endOfToday;
+      return {
+        startMs: s,
+        endMs: e,
+        label: analyticsStartDate && analyticsEndDate ? `${analyticsStartDate} to ${analyticsEndDate}` : 'Custom Date Range',
+      };
+    }
+    return {
+      startMs: startOfToday,
+      endMs: endOfToday,
+      label: "Today's Trading",
+    };
+  }, [analyticsDateRange, analyticsStartDate, analyticsEndDate]);
+
+  const analyticsFinancials = useMemo(() => {
+    const { startMs, endMs, label } = analyticsPeriodBounds;
+
+    // 1. Calculate Sales from movements in period
+    const periodMovements = movements.filter((m) => {
+      const t = new Date(m.created_at).getTime();
+      return t >= startMs && t <= endMs;
+    });
+
+    const saleMovements = periodMovements.filter((m) => m.movement_type === 'SALE');
+
+    let movementSalesTotal = 0;
+    let movementCogsTotal = 0;
+    for (const sm of saleMovements) {
+      const qty = Math.abs(Number(sm.quantity_change || sm.quantity || 0));
+      const lineVal = Number(sm.total_value || qty * Number(sm.unit_price || 0));
+      const unitCost = Number(sm.cost_price || 0);
+      movementSalesTotal += lineVal;
+      movementCogsTotal += qty * unitCost;
+    }
+
+    // 2. Calculate Inflows & Outflows from cash_transactions in period
+    const periodTxs = transactions.filter((tx) => {
+      if ((tx.status || 'ACTIVE') !== 'ACTIVE') return false;
+      const t = new Date(tx.transaction_date).getTime();
+      return t >= startMs && t <= endMs;
+    });
+
+    let salesInflowTotal = 0;
+    let operatingExpensesTotal = 0;
+    let salesTxCount = 0;
+    let expenseTxCount = 0;
+
+    const channelMap = {
+      CASH: { payment_method: 'CASH', label: 'Cash (Drawer)', inflow: 0, outflow: 0, salesCount: 0 },
+      POS: { payment_method: 'POS', label: 'POS Terminal', inflow: 0, outflow: 0, salesCount: 0 },
+      BANK_TRANSFER: { payment_method: 'BANK_TRANSFER', label: 'Bank Transfer', inflow: 0, outflow: 0, salesCount: 0 },
+      MOBILE_MONEY: { payment_method: 'MOBILE_MONEY', label: 'Mobile Wallet', inflow: 0, outflow: 0, salesCount: 0 },
+    };
+
+    const expenseCategoriesMap = new Map();
+
+    for (const tx of periodTxs) {
+      const amt = Number(tx.amount || 0);
+      const method = tx.payment_method || 'CASH';
+      if (!channelMap[method]) {
+        channelMap[method] = { payment_method: method, label: method, inflow: 0, outflow: 0, salesCount: 0 };
+      }
+
+      if (tx.type === 'INFLOW') {
+        channelMap[method].inflow += amt;
+        salesInflowTotal += amt;
+        salesTxCount += 1;
+        channelMap[method].salesCount += 1;
+      } else if (tx.type === 'OUTFLOW') {
+        channelMap[method].outflow += amt;
+        operatingExpensesTotal += amt;
+        expenseTxCount += 1;
+
+        const cat = tx.category || 'General Expense';
+        const currentCatAmt = expenseCategoriesMap.get(cat) || 0;
+        expenseCategoriesMap.set(cat, currentCatAmt + amt);
+      }
+    }
+
+    // Sales Revenue: Prefer movementSalesTotal when sale movements exist, otherwise use recorded cash sales inflows
+    const salesRevenue = movementSalesTotal > 0 ? movementSalesTotal : salesInflowTotal;
+    const cogs = movementCogsTotal;
+    const grossProfit = Number((salesRevenue - cogs).toFixed(2));
+    const grossMarginPercent = salesRevenue > 0 ? (grossProfit / salesRevenue) * 100 : 0;
+
+    const operatingExpenses = Number(operatingExpensesTotal.toFixed(2));
+    const netOperatingProfit = Number((grossProfit - operatingExpenses).toFixed(2));
+    const netMarginPercent = salesRevenue > 0 ? (netOperatingProfit / salesRevenue) * 100 : 0;
+
+    // Liquid Cash Available Position (current physical drawer + bank/pos from cashbook dashboard)
+    const netCashBal = Number(dashboard.net_cash_balance || 0);
+    const channels = dashboard.channels || [];
+    const cashDrawerCh = channels.find((c) => c.payment_method === 'CASH');
+    const posCh = channels.find((c) => c.payment_method === 'POS');
+    const bankCh = channels.find((c) => c.payment_method === 'BANK_TRANSFER');
+
+    const cashInDrawer = cashDrawerCh ? Number(cashDrawerCh.net || 0) : Number(cashbookSession?.effectiveOpeningCash || 0);
+    const posBalance = posCh ? Number(posCh.net || 0) : 0;
+    const bankBalance = bankCh ? Number(bankCh.net || 0) : Number(cashbookSession?.effectiveOpeningBankPos || 0);
+    const cashAvailable = netCashBal > 0 ? netCashBal : Number((cashInDrawer + posBalance + bankBalance).toFixed(2));
+
+    // Inventory Valuation
+    const inventoryCostValue = Number(dashboard.inventory_cost_value || 0);
+    const inventoryRetailValue = Number(dashboard.inventory_retail_value || 0);
+    const unrealizedMargin = Number(dashboard.projected_gross_margin || 0);
+
+    const expenseBreakdown = Array.from(expenseCategoriesMap.entries())
+      .map(([category, amount]) => ({ category, amount }))
+      .sort((a, b) => b.amount - a.amount);
+
+    const channelBreakdown = Object.values(channelMap).filter((ch) => ch.inflow > 0 || ch.outflow > 0);
+
+    return {
+      dateRangeLabel: label,
+      metrics: {
+        salesRevenue: Number(salesRevenue.toFixed(2)),
+        cogs: Number(cogs.toFixed(2)),
+        grossProfit,
+        grossMarginPercent,
+        operatingExpenses,
+        netOperatingProfit,
+        netMarginPercent,
+        cashAvailable,
+        cashInDrawer,
+        posBalance,
+        bankBalance,
+        inventoryCostValue,
+        inventoryRetailValue,
+        unrealizedMargin,
+        salesCount: saleMovements.length || salesTxCount,
+        expenseCount: expenseTxCount,
+      },
+      expenseBreakdown,
+      channelBreakdown,
+    };
+  }, [movements, transactions, dashboard, cashbookSession, analyticsPeriodBounds]);
 
   // Cart Calculations
   const cartItems = useMemo(() => {
@@ -4026,101 +4202,206 @@ function AppShell() {
           </div>
         )}
 
-        {/* TAB 6: POS VS CASH RECONCILIATION & PROFIT */}
+        {/* TAB 6: POS VS CASH RECONCILIATION & PROFIT (P&L) */}
         {activeTab === 'analytics' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-4">
-              <div>
-                <h3 className="text-base font-extrabold font-luxury text-theme-primary">
-                  Cash in Hand vs. POS & Bank Transfers
-                </h3>
-                <p className="text-xs text-theme-secondary">
-                  Check how much physical Naira should be in your shop drawer vs your Moniepoint /
-                  OPay account
-                </p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead
-                    style={{
-                      backgroundColor: 'var(--bg-subtle)',
-                      borderColor: 'var(--border-outer)',
-                    }}
-                    className="text-[11px] font-bold uppercase tracking-wider border-b text-theme-secondary"
+          <div className="space-y-5">
+            {/* Control & Date Filter Bar */}
+            <div className="liquid-glass rounded-3xl p-4 sm:p-5 border theme-divider space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-extrabold font-luxury text-base sm:text-lg text-theme-primary flex items-center gap-2">
+                    <Scale className="w-5 h-5 text-theme-primary" />
+                    POS vs. Cash Reconciliation &amp; Retail Profit
+                  </h3>
+                  <p className="text-xs text-theme-secondary mt-0.5">
+                    Clear distinction between Sales Revenue, Gross Profit, Operating Expenses, Net Profit, Liquid Cash, and Inventory Capital.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowReconcileModal(true)}
+                    className="liquid-btn-primary px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md cursor-pointer whitespace-nowrap"
                   >
-                    <tr>
-                      <th className="py-2.5 px-3">Channel</th>
-                      <th className="py-2.5 px-3 text-right">Money In</th>
-                      <th className="py-2.5 px-3 text-right">Money Out</th>
-                      <th className="py-2.5 px-3 text-right">Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y theme-divider">
-                    {(dashboard.channels || []).map((ch) => (
-                      <tr key={ch.payment_method}>
-                        <td className="py-3 px-3 font-bold text-xs text-theme-primary">
-                          {PAYMENT_CHANNEL_LABELS[ch.payment_method] || ch.payment_method}
-                        </td>
-                        <td className="py-3 px-3 text-right font-bold tabular-nums text-theme-inflow">
-                          +{formatNaira(ch.inflow)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-bold tabular-nums text-theme-outflow">
-                          -{formatNaira(ch.outflow)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-extrabold font-luxury tabular-nums text-theme-primary">
-                          {formatNaira(ch.net)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    <Scale className="w-4 h-4" /> Reconcile Daily Cash &amp; POS
+                  </button>
+                </div>
+              </div>
+
+              {/* Date Filter Pills */}
+              <div className="pt-2 border-t theme-divider flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-bold text-theme-secondary flex items-center gap-1 mr-1">
+                    <Calendar className="w-3.5 h-3.5" /> Performance Period:
+                  </span>
+                  {[
+                    { id: 'TODAY', label: 'Today' },
+                    { id: 'WEEK', label: 'This Week (7 Days)' },
+                    { id: 'MONTH', label: 'This Month (30 Days)' },
+                    { id: 'CUSTOM', label: 'Custom Range' },
+                  ].map((p) => {
+                    const active = analyticsDateRange === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setAnalyticsDateRange(p.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                          active
+                            ? 'bg-primary/20 border-primary text-theme-primary'
+                            : 'liquid-glass-subtle border-theme-border text-theme-secondary hover:text-theme-primary'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {analyticsDateRange === 'CUSTOM' && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={analyticsStartDate}
+                      onChange={(e) => setAnalyticsStartDate(e.target.value)}
+                      className="px-2.5 py-1 rounded-xl text-xs bg-theme-input border border-theme-border text-theme-primary focus:outline-none"
+                    />
+                    <span className="text-xs text-theme-secondary">to</span>
+                    <input
+                      type="date"
+                      value={analyticsEndDate}
+                      onChange={(e) => setAnalyticsEndDate(e.target.value)}
+                      className="px-2.5 py-1 rounded-xl text-xs bg-theme-input border border-theme-border text-theme-primary focus:outline-none"
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-4">
-              <div>
-                <h3 className="text-base font-extrabold font-luxury text-theme-primary">
-                  Shelf Goods Value by Category
-                </h3>
-                <p className="text-xs text-theme-secondary">
-                  See which provision categories hold your capital and expected sales value
-                </p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead
-                    style={{
-                      backgroundColor: 'var(--bg-subtle)',
-                      borderColor: 'var(--border-outer)',
-                    }}
-                    className="text-[11px] font-bold uppercase tracking-wider border-b text-theme-secondary"
-                  >
-                    <tr>
-                      <th className="py-2.5 px-3">Category</th>
-                      <th className="py-2.5 px-3 text-center">Items</th>
-                      <th className="py-2.5 px-3 text-right">Market Cost</th>
-                      <th className="py-2.5 px-3 text-right">Selling Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y theme-divider">
-                    {(dashboard.categories || []).map((cat) => (
-                      <tr key={cat.category}>
-                        <td className="py-3 px-3 font-extrabold font-luxury text-theme-primary">
-                          {cat.category}
-                        </td>
-                        <td className="py-3 px-3 text-center tabular-nums text-theme-secondary">
-                          {cat.sku_count}
-                        </td>
-                        <td className="py-3 px-3 text-right tabular-nums text-theme-secondary">
-                          {formatNaira(cat.cost_value)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-extrabold font-luxury tabular-nums text-theme-inflow">
-                          {formatNaira(cat.retail_value)}
-                        </td>
+            {/* Core 6 Financial Metrics with Educational Explainer */}
+            <FinancialMetricsOverview
+              metrics={analyticsFinancials.metrics}
+              formatNaira={formatNaira}
+              dateRangeLabel={analyticsFinancials.dateRangeLabel}
+              onOpenReconcile={() => setShowReconcileModal(true)}
+            />
+
+            {/* Profit & Loss Statement (Itemized P&L Table) */}
+            <ProfitAndLossStatement
+              metrics={analyticsFinancials.metrics}
+              expenseBreakdown={analyticsFinancials.expenseBreakdown}
+              channelBreakdown={analyticsFinancials.channelBreakdown}
+              dateRangeLabel={analyticsFinancials.dateRangeLabel}
+              formatNaira={formatNaira}
+            />
+
+            {/* Payment Channels Inflow vs Outflow & Category Shelf Inventory */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Cash vs POS vs Bank Transfers in Period */}
+              <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-4">
+                <div>
+                  <h3 className="text-base font-extrabold font-luxury text-theme-primary flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-theme-primary" />
+                    Cash Drawer vs. POS Terminal &amp; Bank Transfers
+                  </h3>
+                  <p className="text-xs text-theme-secondary mt-0.5">
+                    How money moved through each channel during {analyticsFinancials.dateRangeLabel.toLowerCase()}
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead
+                      style={{
+                        backgroundColor: 'var(--bg-subtle)',
+                        borderColor: 'var(--border-outer)',
+                      }}
+                      className="text-[11px] font-bold uppercase tracking-wider border-b text-theme-secondary"
+                    >
+                      <tr>
+                        <th className="py-2.5 px-3">Payment Channel</th>
+                        <th className="py-2.5 px-3 text-right">Money In</th>
+                        <th className="py-2.5 px-3 text-right">Money Out</th>
+                        <th className="py-2.5 px-3 text-right">Period Net</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y theme-divider">
+                      {analyticsFinancials.channelBreakdown.length > 0 ? (
+                        analyticsFinancials.channelBreakdown.map((ch) => (
+                          <tr key={ch.payment_method}>
+                            <td className="py-3 px-3 font-bold text-xs text-theme-primary">
+                              {ch.label || PAYMENT_CHANNEL_LABELS[ch.payment_method] || ch.payment_method}
+                            </td>
+                            <td className="py-3 px-3 text-right font-bold tabular-nums text-theme-inflow">
+                              +{formatNaira(ch.inflow)}
+                            </td>
+                            <td className="py-3 px-3 text-right font-bold tabular-nums text-theme-outflow">
+                              -{formatNaira(ch.outflow)}
+                            </td>
+                            <td className="py-3 px-3 text-right font-extrabold font-luxury tabular-nums text-theme-primary">
+                              {formatNaira(ch.inflow - ch.outflow)}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} className="py-4 text-center text-xs text-theme-secondary">
+                            No channel transactions recorded in this period.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Shelf Goods Value by Category */}
+              <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-4">
+                <div>
+                  <h3 className="text-base font-extrabold font-luxury text-theme-primary flex items-center gap-2">
+                    <Package className="w-4 h-4 text-theme-primary" />
+                    Shelf Goods Capital by Category
+                  </h3>
+                  <p className="text-xs text-theme-secondary mt-0.5">
+                    Physical stock capital currently locked on shelves and expected retail returns
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead
+                      style={{
+                        backgroundColor: 'var(--bg-subtle)',
+                        borderColor: 'var(--border-outer)',
+                      }}
+                      className="text-[11px] font-bold uppercase tracking-wider border-b text-theme-secondary"
+                    >
+                      <tr>
+                        <th className="py-2.5 px-3">Category</th>
+                        <th className="py-2.5 px-3 text-center">SKUs</th>
+                        <th className="py-2.5 px-3 text-right">Cost Capital</th>
+                        <th className="py-2.5 px-3 text-right">Selling Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y theme-divider">
+                      {(dashboard.categories || []).map((cat) => (
+                        <tr key={cat.category}>
+                          <td className="py-3 px-3 font-extrabold font-luxury text-theme-primary">
+                            {cat.category}
+                          </td>
+                          <td className="py-3 px-3 text-center tabular-nums text-theme-secondary">
+                            {cat.sku_count}
+                          </td>
+                          <td className="py-3 px-3 text-right tabular-nums text-theme-secondary font-mono">
+                            {formatNaira(cat.cost_value)}
+                          </td>
+                          <td className="py-3 px-3 text-right font-extrabold font-luxury tabular-nums text-theme-inflow">
+                            {formatNaira(cat.retail_value)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -4768,6 +5049,21 @@ function AppShell() {
         apiFetch={apiFetch}
         existingCustomers={customerLedgers}
         formatNaira={formatNaira}
+      />
+
+      {/* DAILY POS, CASH & BANK RECONCILIATION MODAL */}
+      <DailyChannelReconciliationModal
+        isOpen={showReconcileModal}
+        onClose={() => setShowReconcileModal(false)}
+        sessionState={cashbookSession}
+        transactions={transactions}
+        apiFetch={apiFetch}
+        formatNaira={formatNaira}
+        storeName={currentUser?.business_name || 'StockFlow Store'}
+        onSuccess={() => {
+          showSuccessToast('Daily channel reconciliation recorded!');
+          fetchAllData();
+        }}
       />
 
       {/* INSTANT DIGITAL SALE RECEIPT (PRINTABLE THERMAL SLIP & WHATSAPP / SHARE) */}

@@ -93,15 +93,15 @@ class InventoryRepository {
     });
   }
 
-  async findRecentMovements(userId, limit = 250) {
+  async findRecentMovements(userId, limit = 500) {
     const { rows } = await db.query(
-      `SELECT sm.*, p.name AS product_name, p.sku, p.unit, p.category
+      `SELECT sm.*, p.name AS product_name, p.sku, p.unit, p.category, p.cost_price, p.selling_price AS product_selling_price
        FROM stock_movements sm
        JOIN products p ON p.id = sm.product_id
        WHERE sm.user_id = $1
        ORDER BY sm.created_at DESC, sm.id DESC
        LIMIT $2`,
-      [userId, Number(limit) || 250]
+      [userId, Number(limit) || 500]
     );
     return rows;
   }

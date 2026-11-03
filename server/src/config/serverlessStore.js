@@ -917,6 +917,8 @@ async function executeQuery(text, params = []) {
           sku: p.sku || 'PRV',
           unit: p.unit || 'Pack',
           category: p.category || 'Provisions',
+          cost_price: Number(p.cost_price || 0),
+          selling_price: Number(p.selling_price || 0),
         };
       });
     return { rows, rowCount: rows.length };
